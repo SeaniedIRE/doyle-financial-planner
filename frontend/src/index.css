@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100 font-sans antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-slate-900 border border-slate-700/50 rounded-xl p-5;
+  }
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+  }
+  .btn-danger {
+    @apply bg-red-700 hover:bg-red-600 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+  }
+  .input {
+    @apply bg-slate-800 border border-slate-600 text-slate-100 rounded-lg px-3 py-2 w-full focus:outline-none focus:border-blue-500 placeholder-slate-500;
+  }
+  .label {
+    @apply block text-sm text-slate-400 mb-1;
+  }
+  .gain { @apply text-emerald-400; }
+  .loss { @apply text-red-400; }
+  .neutral { @apply text-slate-400; }
+  .badge-tfsa { @apply bg-emerald-900/50 text-emerald-300 border border-emerald-700/50; }
+  .badge-rrsp { @apply bg-blue-900/50 text-blue-300 border border-blue-700/50; }
+  .badge-fhsa { @apply bg-purple-900/50 text-purple-300 border border-purple-700/50; }
+  .badge-lira { @apply bg-amber-900/50 text-amber-300 border border-amber-700/50; }
+  .badge-margin { @apply bg-orange-900/50 text-orange-300 border border-orange-700/50; }
+  .badge-cash { @apply bg-slate-700/50 text-slate-300 border border-slate-600/50; }
+  .badge-joint { @apply bg-teal-900/50 text-teal-300 border border-teal-700/50; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }

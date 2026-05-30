@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: financial-planner-backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data      # SQLite database lives here — back up this folder
+    networks:
+      - fp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: financial-planner-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - fp-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: financial-planner-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"             # Unraid exposes this port → Cloudflare tunnel points here
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - fp-network
+
+networks:
+  fp-network:
+    driver: bridge
+
+volumes:
+  data:

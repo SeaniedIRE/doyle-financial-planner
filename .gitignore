@@ -1,0 +1,25 @@
+# Environment (contains API keys — never commit this)
+.env
+
+# Database (contains your financial data — keep local only)
+data/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
