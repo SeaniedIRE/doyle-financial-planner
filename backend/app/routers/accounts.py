@@ -24,6 +24,8 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
+    account_number: Optional[str] = None  # allows fixing PLACEHOLDER-* after first run
+    owner: Optional[str] = None           # allows fixing person_a/person_b → sean/saudya
     margin_loan_cad: Optional[float] = None
     margin_rate_pct: Optional[float] = None
     notes: Optional[str] = None
@@ -332,7 +334,9 @@ async def import_holdings_csv(
 @router.get("/settings")
 def get_settings(db: Session = Depends(get_db)):
     rows = db.query(AppSettings).all()
-    return {r.key: r.value for r in rows}
+    # The API key is managed via /api/ai/key-status and /api/ai/set-key.
+    # It must never be returned to the frontend from this endpoint.
+    return {r.key: r.value for r in rows if r.key != "anthropic_api_key"}
 
 
 @router.put("/settings")

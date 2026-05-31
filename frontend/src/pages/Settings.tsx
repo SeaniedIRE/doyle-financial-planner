@@ -1,13 +1,25 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getSettings, updateSettings } from '../api/accounts'
-import { Save, Upload, FileText, X } from 'lucide-react'
+import { getAIKeyStatus, setAIKey } from '../api/ai'
+import { Save, Upload, FileText, X, Key, CheckCircle, Eye, EyeOff } from 'lucide-react'
 import api from '../api/client'
 
 export default function Settings() {
   const qc = useQueryClient()
   const { data: settings = {} } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const [form, setForm] = useState<Record<string, string>>({})
+
+  // AI key state
+  const { data: keyStatus } = useQuery({ queryKey: ['ai-key-status'], queryFn: getAIKeyStatus, staleTime: 30_000 })
+  const [newKey, setNewKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+  const setKeyMut = useMutation({
+    mutationFn: () => setAIKey(newKey.trim()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ai-key-status'] }); setNewKey(''); setKeyError(null) },
+    onError: (e: any) => setKeyError(e?.response?.data?.detail ?? 'Failed to save key.'),
+  })
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [importResult, setImportResult] = useState<string | null>(null)
@@ -90,6 +102,56 @@ export default function Settings() {
           <Save size={14} />
           {saveMut.isPending ? 'Saving…' : 'Save Settings'}
         </button>
+      </div>
+
+      {/* AI Advisor Key */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold text-slate-200">AI Advisor Key</h2>
+          {keyStatus?.configured && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-400">
+              <CheckCircle size={12} />
+              {keyStatus.source === 'env' ? 'Set via Docker env var (priority)' : 'Set via app database'}
+            </div>
+          )}
+          {keyStatus && !keyStatus.configured && (
+            <span className="text-xs text-amber-400">Not configured</span>
+          )}
+        </div>
+        <p className="text-sm text-slate-400 mb-4">
+          The Anthropic API key powers the AI Advisor. If you set{' '}
+          <code className="text-slate-300 bg-slate-800 px-1 rounded">ANTHROPIC_API_KEY</code> as a Docker
+          environment variable it takes priority. You can also paste a key here to store it in the database.
+        </p>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="label">
+              {keyStatus?.configured ? 'Replace API Key' : 'Paste API Key'}
+            </label>
+            <div className="flex gap-2">
+              <input
+                type={showKey ? 'text' : 'password'}
+                className="input flex-1 font-mono text-sm"
+                placeholder="sk-ant-api03-…"
+                value={newKey}
+                onChange={e => { setNewKey(e.target.value); setKeyError(null) }}
+              />
+              <button type="button" onClick={() => setShowKey(s => !s)}
+                className="px-3 text-slate-400 hover:text-slate-200 border border-slate-600 rounded-lg transition-colors">
+                {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {keyError && <div className="mt-1 text-xs text-red-400">{keyError}</div>}
+          </div>
+          <button onClick={() => setKeyMut.mutate()} disabled={setKeyMut.isPending || newKey.length < 20}
+            className="btn-primary flex items-center gap-2 h-10">
+            <Key size={14} />
+            {setKeyMut.isPending ? 'Saving…' : 'Save Key'}
+          </button>
+        </div>
+        {setKeyMut.isSuccess && (
+          <div className="mt-2 text-sm text-emerald-400">✅ Key saved — AI Advisor is ready.</div>
+        )}
       </div>
 
       {/* CSV Import */}

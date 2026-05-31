@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
+from datetime import datetime
 from ..database import get_db
-from ..models.account import Account, Holding
+from ..models.account import Account, Holding, AppSettings
 from ..models.income import Income
 from ..services.claude_service import (
     ask_claude, validate_tax_strategy, get_loss_harvest_advice,
@@ -12,6 +13,21 @@ from ..services.claude_service import (
 from ..security import check_ai_rate_limit
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Internal helper — resolve the API key for a request.
+# Priority: env var (Docker) > DB-stored value (set via UI).
+# The key is NEVER returned to the frontend in any response.
+# ─────────────────────────────────────────────────────────────────────
+
+def _get_api_key(db: Session) -> str:
+    """Return the best available Anthropic API key for this request."""
+    from ..config import settings
+    if settings.anthropic_api_key:
+        return settings.anthropic_api_key  # Docker env var wins
+    row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
+    return (row.value or "") if row else ""
 
 
 class AskRequest(BaseModel):
@@ -26,10 +42,54 @@ class StrategyRequest(BaseModel):
     actions: list[str]
 
 
+class SetKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=20, max_length=300)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Key management endpoints (no rate-limit — not AI calls)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/key-status")
+def key_status(db: Session = Depends(get_db)):
+    """Return whether an API key is configured and where it came from.
+    The key value is NEVER included in the response.
+    """
+    from ..config import settings
+    if settings.anthropic_api_key:
+        return {"configured": True, "source": "env"}
+    row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
+    if row and row.value:
+        return {"configured": True, "source": "db"}
+    return {"configured": False, "source": "none"}
+
+
+@router.post("/set-key")
+def set_key(req: SetKeyRequest, db: Session = Depends(get_db)):
+    """Store an Anthropic API key in the database.
+    The env-var always takes priority at runtime — this is the fallback for
+    users who cannot set Docker environment variables.
+    """
+    if not req.api_key.startswith("sk-ant-"):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid key format — Anthropic keys start with 'sk-ant-'.",
+        )
+    row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
+    if row:
+        row.value = req.api_key
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(AppSettings(key="anthropic_api_key", value=req.api_key))
+    db.commit()
+    return {"message": "API key saved — AI Advisor is now ready."}
+
+
 @router.post("/ask")
 def ask(req: AskRequest, request: Request, db: Session = Depends(get_db)):
     """Free-form question to Claude with optional portfolio context."""
     check_ai_rate_limit(request)
+    api_key = _get_api_key(db)
     context = None
     if req.include_portfolio_context:
         accounts = db.query(Account).filter(Account.is_active == True).all()
@@ -42,20 +102,22 @@ def ask(req: AskRequest, request: Request, db: Session = Depends(get_db)):
                 "holdings": [{"symbol": h.symbol, "qty": h.quantity, "market_value": h.market_value_cad} for h in hs],
             }
         context = {"portfolio": portfolio_summary, "year": req.year}
-    response = ask_claude(req.question, context)
+    response = ask_claude(req.question, context, api_key=api_key)
     return {"response": response}
 
 
 @router.post("/validate-strategy")
-def validate_strategy(req: StrategyRequest, request: Request):
+def validate_strategy(req: StrategyRequest, request: Request, db: Session = Depends(get_db)):
     check_ai_rate_limit(request)
-    response = validate_tax_strategy(req.model_dump())
+    api_key = _get_api_key(db)
+    response = validate_tax_strategy(req.model_dump(), api_key=api_key)
     return {"response": response}
 
 
 @router.post("/loss-harvest-advice/{holding_id}")
 def loss_harvest_ai(holding_id: int, request: Request, db: Session = Depends(get_db)):
     check_ai_rate_limit(request)
+    api_key = _get_api_key(db)
     h = db.query(Holding).filter(Holding.id == holding_id).first()
     if not h:
         raise HTTPException(status_code=404, detail="Holding not found")
@@ -68,14 +130,15 @@ def loss_harvest_ai(holding_id: int, request: Request, db: Session = Depends(get
         "unrealized_loss": h.market_value_cad - h.book_value_cad,
         "account_type": acc.account_type if acc else "Unknown",
     }
-    portfolio_data = {"ytd_gains": 0}  # user can supply via query param
-    response = get_loss_harvest_advice(holding_data, portfolio_data)
+    portfolio_data = {"ytd_gains": 0}
+    response = get_loss_harvest_advice(holding_data, portfolio_data, api_key=api_key)
     return {"response": response}
 
 
 @router.get("/fhsa-strategy")
 def fhsa_strategy_advice(request: Request, house_year: int = 2030, house_price: float = 900000, db: Session = Depends(get_db)):
     check_ai_rate_limit(request)
+    api_key = _get_api_key(db)
     def get_balance(owner, at):
         accs = db.query(Account).filter(Account.owner == owner, Account.account_type == at, Account.is_active == True).all()
         total = 0.0
@@ -105,13 +168,14 @@ def fhsa_strategy_advice(request: Request, house_year: int = 2030, house_price: 
         "fhsa_contributed": fhsa_contributed("saudya"),
         "rrsp_balance": get_balance("saudya", "RRSP"),
     }
-    response = get_fhsa_strategy(sean, saudya)
+    response = get_fhsa_strategy(sean, saudya, api_key=api_key)
     return {"response": response}
 
 
 @router.get("/annual-review/{year}")
 def annual_review(year: int, request: Request, db: Session = Depends(get_db)):
     check_ai_rate_limit(request)
+    api_key = _get_api_key(db)
     def get_inc(person):
         return db.query(Income).filter(Income.person == person, Income.year == year).first()
 
@@ -195,5 +259,5 @@ def annual_review(year: int, request: Request, db: Session = Depends(get_db)):
         "margin_rate": float(db.query(AppSettings).filter(AppSettings.key == "margin_rate").first().value
                             if db.query(AppSettings).filter(AppSettings.key == "margin_rate").first() else 3.95),
     }
-    response = annual_review_prompt(year, sean_data, saudya_data, portfolio_data)
+    response = annual_review_prompt(year, sean_data, saudya_data, portfolio_data, api_key=api_key)
     return {"response": response}

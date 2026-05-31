@@ -24,12 +24,21 @@ If a strategy has risks, explain them and suggest safer alternatives.
 Format your response with clear sections: Summary, Findings, Risks, Recommendations."""
 
 
-def ask_claude(prompt: str, context: dict | None = None) -> str:
-    """Send a financial planning question to Claude and return the response."""
-    if not settings.anthropic_api_key:
-        return "⚠️ Anthropic API key not configured. Add ANTHROPIC_API_KEY to your .env file."
+def ask_claude(prompt: str, context: dict | None = None, api_key: str = "") -> str:
+    """Send a financial planning question to Claude and return the response.
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    api_key: resolved key to use. Falls back to the env-var key in settings.
+    The caller (ai.py) is responsible for resolving env → DB priority via _get_api_key().
+    """
+    resolved_key = api_key or settings.anthropic_api_key
+    if not resolved_key:
+        return (
+            "⚠️ Anthropic API key not configured. "
+            "Go to **Settings → AI Advisor** and paste your key, "
+            "or set the ANTHROPIC_API_KEY Docker environment variable."
+        )
+
+    client = anthropic.Anthropic(api_key=resolved_key)
 
     full_prompt = prompt
     if context:
@@ -46,7 +55,7 @@ def ask_claude(prompt: str, context: dict | None = None) -> str:
     return message.content[0].text
 
 
-def validate_tax_strategy(strategy: dict) -> str:
+def validate_tax_strategy(strategy: dict, api_key: str = "") -> str:
     """Validate a specific tax strategy against CRA rules."""
     prompt = f"""Please review this financial strategy for CRA compliance and tax optimization:
 
@@ -63,10 +72,10 @@ Please check:
 4. Tax optimization opportunities missed
 5. Impact on contribution room (TFSA, RRSP, FHSA)"""
 
-    return ask_claude(prompt, context=strategy)
+    return ask_claude(prompt, context=strategy, api_key=api_key)
 
 
-def get_loss_harvest_advice(holding: dict, portfolio: dict) -> str:
+def get_loss_harvest_advice(holding: dict, portfolio: dict, api_key: str = "") -> str:
     """Get specific advice on harvesting a capital loss position."""
     prompt = f"""Analyze this capital loss harvesting opportunity for a Canadian investor (Ontario):
 
@@ -84,10 +93,10 @@ Please advise:
 4. 3-year capital loss carryback vs carryforward options
 5. Optimal timing relative to year-end"""
 
-    return ask_claude(prompt)
+    return ask_claude(prompt, api_key=api_key)
 
 
-def get_fhsa_strategy(sean: dict, saudya: dict) -> str:
+def get_fhsa_strategy(sean: dict, saudya: dict, api_key: str = "") -> str:
     """Get FHSA withdrawal strategy for first home purchase."""
     prompt = f"""Advise on optimal FHSA withdrawal strategy for a home purchase:
 
@@ -113,10 +122,10 @@ Please advise on:
 4. Tax implications and repayment requirements for HBP
 5. Timing of final FHSA contributions before withdrawal"""
 
-    return ask_claude(prompt)
+    return ask_claude(prompt, api_key=api_key)
 
 
-def annual_review_prompt(year: int, sean_income: dict, saudya_income: dict, portfolio: dict) -> str:
+def annual_review_prompt(year: int, sean_income: dict, saudya_income: dict, portfolio: dict, api_key: str = "") -> str:
     """Generate a comprehensive year-end review and recommendations."""
     prompt = f"""Year-end financial review for a Canadian couple (Ontario) for tax year {year}:
 
@@ -148,4 +157,4 @@ PORTFOLIO:
 
 Provide year-end action checklist with priority and estimated tax savings for each item."""
 
-    return ask_claude(prompt)
+    return ask_claude(prompt, api_key=api_key)

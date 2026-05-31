@@ -21,3 +21,12 @@ export const getAnnualReview = (year: number) =>
 
 export const getLossHarvestAll = (marginalRate = 53, ytdGains = 0) =>
   api.get(`/acb/loss-harvest/analysis?marginal_rate=${marginalRate}&ytd_gains=${ytdGains}`).then(r => r.data)
+
+// ── API key management ────────────────────────────────────────────────
+// The key value is never returned — only configured status and source.
+
+export const getAIKeyStatus = () =>
+  api.get<{ configured: boolean; source: 'env' | 'db' | 'none' }>('/ai/key-status').then(r => r.data)
+
+export const setAIKey = (apiKey: string) =>
+  api.post<{ message: string }>('/ai/set-key', { api_key: apiKey }).then(r => r.data)
