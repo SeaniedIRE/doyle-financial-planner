@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from ..database import get_db
 from ..models.account import Account, Holding, AppSettings
+from ..security import validate_settings_keys, validate_csv_body
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -202,13 +203,19 @@ def portfolio_totals(db: Session = Depends(get_db)):
     return totals
 
 
+class CSVImportRequest(BaseModel):
+    file_content: str = Field(..., max_length=200_000)
+
+
 @router.post("/holdings/import-csv")
 async def import_holdings_csv(
-    file_content: str,
+    body: CSVImportRequest,
     db: Session = Depends(get_db),
 ):
     """Import holdings from a broker CSV string. Matches by symbol+account_number."""
     import csv, io
+    file_content = body.file_content
+    validate_csv_body(file_content)
     reader = csv.DictReader(io.StringIO(file_content))
     updated = 0
     for row in reader:
@@ -244,11 +251,12 @@ def get_settings(db: Session = Depends(get_db)):
 
 @router.put("/settings")
 def update_settings(data: dict, db: Session = Depends(get_db)):
+    # Whitelist check — only known keys accepted (OWASP A03 / ASVS V5.1.3)
+    validate_settings_keys(data)
     for key, value in data.items():
         row = db.query(AppSettings).filter(AppSettings.key == key).first()
         if row:
             row.value = str(value)
-            row.updated_at = datetime.utcnow()
         else:
             db.add(AppSettings(key=key, value=str(value)))
     db.commit()

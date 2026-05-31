@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from ..database import get_db
 from ..models.account import Account, Holding
@@ -9,14 +9,15 @@ from ..services.claude_service import (
     ask_claude, validate_tax_strategy, get_loss_harvest_advice,
     get_fhsa_strategy, annual_review_prompt,
 )
+from ..security import check_ai_rate_limit
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=3, max_length=2000)
     include_portfolio_context: bool = True
-    year: int = 2026
+    year: int = Field(default=2026, ge=2020, le=2070)
 
 
 class StrategyRequest(BaseModel):
@@ -26,8 +27,9 @@ class StrategyRequest(BaseModel):
 
 
 @router.post("/ask")
-def ask(req: AskRequest, db: Session = Depends(get_db)):
+def ask(req: AskRequest, request: Request, db: Session = Depends(get_db)):
     """Free-form question to Claude with optional portfolio context."""
+    check_ai_rate_limit(request)
     context = None
     if req.include_portfolio_context:
         accounts = db.query(Account).filter(Account.is_active == True).all()
@@ -45,13 +47,15 @@ def ask(req: AskRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/validate-strategy")
-def validate_strategy(req: StrategyRequest):
+def validate_strategy(req: StrategyRequest, request: Request):
+    check_ai_rate_limit(request)
     response = validate_tax_strategy(req.model_dump())
     return {"response": response}
 
 
 @router.post("/loss-harvest-advice/{holding_id}")
-def loss_harvest_ai(holding_id: int, db: Session = Depends(get_db)):
+def loss_harvest_ai(holding_id: int, request: Request, db: Session = Depends(get_db)):
+    check_ai_rate_limit(request)
     h = db.query(Holding).filter(Holding.id == holding_id).first()
     if not h:
         raise HTTPException(status_code=404, detail="Holding not found")
@@ -70,7 +74,8 @@ def loss_harvest_ai(holding_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/fhsa-strategy")
-def fhsa_strategy_advice(house_year: int = 2030, house_price: float = 900000, db: Session = Depends(get_db)):
+def fhsa_strategy_advice(request: Request, house_year: int = 2030, house_price: float = 900000, db: Session = Depends(get_db)):
+    check_ai_rate_limit(request)
     def get_balance(owner, at):
         accs = db.query(Account).filter(Account.owner == owner, Account.account_type == at, Account.is_active == True).all()
         total = 0.0
@@ -79,16 +84,25 @@ def fhsa_strategy_advice(house_year: int = 2030, house_price: float = 900000, db
             total += sum(h.market_value_cad for h in hs)
         return total
 
+    from ..models.room import ContributionRoom
+    def fhsa_contributed(owner: str) -> float:
+        # 40000 lifetime limit minus current room available
+        room = db.query(ContributionRoom).filter(
+            ContributionRoom.person == owner,
+            ContributionRoom.account_type == "FHSA",
+        ).order_by(ContributionRoom.year.desc()).first()
+        return max(0, 40000 - (room.room_available if room else 40000))
+
     sean = {
         "fhsa_balance": get_balance("sean", "FHSA"),
-        "fhsa_contributed": 35052,
+        "fhsa_contributed": fhsa_contributed("sean"),
         "rrsp_balance": get_balance("sean", "RRSP"),
         "house_price": house_price,
         "house_year": house_year,
     }
     saudya = {
         "fhsa_balance": get_balance("saudya", "FHSA"),
-        "fhsa_contributed": 35213,
+        "fhsa_contributed": fhsa_contributed("saudya"),
         "rrsp_balance": get_balance("saudya", "RRSP"),
     }
     response = get_fhsa_strategy(sean, saudya)
@@ -96,7 +110,8 @@ def fhsa_strategy_advice(house_year: int = 2030, house_price: float = 900000, db
 
 
 @router.get("/annual-review/{year}")
-def annual_review(year: int, db: Session = Depends(get_db)):
+def annual_review(year: int, request: Request, db: Session = Depends(get_db)):
+    check_ai_rate_limit(request)
     def get_inc(person):
         return db.query(Income).filter(Income.person == person, Income.year == year).first()
 
@@ -125,33 +140,60 @@ def annual_review(year: int, db: Session = Depends(get_db)):
             else:
                 unrealized_gains += diff
 
+    from ..models.room import ContributionRoom
+    from ..models.account import AppSettings
+    from ..services.tax_engine import rrsp_room as calc_rrsp_room
+
+    def get_room(person: str, account_type: str) -> float:
+        row = db.query(ContributionRoom).filter(
+            ContributionRoom.person == person,
+            ContributionRoom.account_type == account_type,
+        ).order_by(ContributionRoom.year.desc()).first()
+        return row.room_available if row else 0
+
+    def get_margin_loan(owner: str) -> float:
+        from ..models.account import Account as Acc
+        accs = db.query(Acc).filter(Acc.owner == owner, Acc.account_type == "Margin", Acc.is_active == True).all()
+        return sum(a.margin_loan_cad or 0 for a in accs)
+
+    def get_marginal(inc_obj) -> float:
+        if not inc_obj:
+            return 0.0
+        try:
+            from ..services.tax_engine import calculate_annual_tax
+            r = calculate_annual_tax(year=year, employment_income=inc_obj.employment_income or 0, bonus=(inc_obj.bonus or 0) + (getattr(inc_obj, 'other_bonus', None) or 0))
+            return r.combined_marginal_pct
+        except Exception:
+            return 0.0
+
     sean_data = {
-        "base": sean_inc.employment_income if sean_inc else 245000,
-        "bonus": (sean_inc.bonus + sean_inc.other_bonus) if sean_inc else 80000,
+        "base": sean_inc.employment_income if sean_inc else 0,
+        "bonus": ((sean_inc.bonus or 0) + (getattr(sean_inc, 'other_bonus', None) or 0)) if sean_inc else 0,
         "rrsp_balance": get_balance("sean", "RRSP"),
         "tfsa_balance": get_balance("sean", "TFSA"),
-        "rrsp_room": 32490,
-        "tfsa_room": 7000,
-        "fhsa_room": 8000,
-        "marginal_rate": 53,
+        "rrsp_room": get_room("sean", "RRSP"),
+        "tfsa_room": get_room("sean", "TFSA"),
+        "fhsa_room": get_room("sean", "FHSA"),
+        "marginal_rate": get_marginal(sean_inc),
     }
     saudya_data = {
-        "base": saudya_inc.employment_income if saudya_inc else 106000,
-        "bonus": saudya_inc.bonus if saudya_inc else 15000,
+        "base": saudya_inc.employment_income if saudya_inc else 0,
+        "bonus": (saudya_inc.bonus or 0) if saudya_inc else 0,
         "rrsp_balance": get_balance("saudya", "RRSP"),
         "tfsa_balance": get_balance("saudya", "TFSA"),
-        "rrsp_room": 22000,
-        "tfsa_room": 7000,
-        "fhsa_room": 8000,
-        "marginal_rate": 43,
+        "rrsp_room": get_room("saudya", "RRSP"),
+        "tfsa_room": get_room("saudya", "TFSA"),
+        "fhsa_room": get_room("saudya", "FHSA"),
+        "marginal_rate": get_marginal(saudya_inc),
     }
     portfolio_data = {
         "unrealized_losses": round(unrealized_losses, 2),
         "unrealized_gains": round(unrealized_gains, 2),
         "ytd_gains": 0,
-        "sean_margin_loan": 100000,
-        "saudya_margin_loan": 100000,
-        "margin_rate": 3.95,
+        "sean_margin_loan": get_margin_loan("sean"),
+        "saudya_margin_loan": get_margin_loan("saudya"),
+        "margin_rate": float(db.query(AppSettings).filter(AppSettings.key == "margin_rate").first().value
+                            if db.query(AppSettings).filter(AppSettings.key == "margin_rate").first() else 3.95),
     }
     response = annual_review_prompt(year, sean_data, saudya_data, portfolio_data)
     return {"response": response}

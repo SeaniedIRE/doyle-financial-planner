@@ -55,7 +55,7 @@ class TestTFSARoom:
             7000 +   # 2025
             7000     # 2026
         )
-        assert room == expected  # Should be $95,000
+        assert room == expected  # Should be $109,000
 
     def test_tfsa_room_resident_since_2018_through_2026(self):
         """Person who moved to Canada in 2018 only gets room from 2018 onward."""
@@ -79,7 +79,7 @@ class TestTFSARoom:
         room_2009 = tfsa_room_to_date(2026, canada_resident_since_year=2009)
         assert room_2018 < room_2009
         assert room_2018 == 57000
-        assert room_2009 == 95000
+        assert room_2009 == 109000  # sum of all TFSA limits 2009–2026
 
     def test_tfsa_annual_2026_limit(self):
         """CRA confirmed 2026 TFSA annual limit."""
@@ -167,8 +167,12 @@ class TestFederalTax:
         assert result.marginal_federal == 33.0
 
     def test_marginal_rate_reported_correctly(self):
-        """Marginal rate for $60K income should be 20.5% federal."""
-        result = calculate_annual_tax(year=2026, employment_income=60000)
+        """Marginal rate for $90K income should be 20.5% federal.
+        $90K taxable − $15,705 BPA = $74,295 after-BPA income.
+        First bracket tops at $57,375 → second bracket 20.5% applies.
+        ($60K only yields $44,295 after BPA, still in the 15% first bracket.)
+        """
+        result = calculate_annual_tax(year=2026, employment_income=90000)
         assert result.marginal_federal == 20.5
 
 
@@ -243,7 +247,7 @@ class TestRRSPDeduction:
         with_rrsp = calculate_annual_tax(year=2026, employment_income=income, rrsp_deduction=deduction)
         tax_saving = no_rrsp.total_tax - with_rrsp.total_tax
         # Should be close to deduction × combined marginal rate
-        approx_saving = deduction * (with_rrsp.combined_marginal_pct / 100)
+        approx_saving = deduction * (with_rrsp.combined_marginal / 100)
         # Allow 10% tolerance (bracket boundaries cause small differences)
         assert abs(tax_saving - approx_saving) / approx_saving < 0.10
 
@@ -318,12 +322,12 @@ class TestAfterTaxSanity:
     def test_average_rate_below_marginal_rate(self):
         """Average effective rate is always below the marginal rate (progressive system)."""
         result = calculate_annual_tax(year=2026, employment_income=200000)
-        assert result.average_rate < result.combined_marginal_pct
+        assert result.average_rate < result.combined_marginal
 
     def test_high_income_combined_marginal_rate(self):
         """Ontario top combined marginal rate should be approximately 53.53%."""
         result = calculate_annual_tax(year=2026, employment_income=300000)
         # 33% federal + 13.16% Ontario = 46.16% on salary
         # Combined marginal including surtaxes should be ~53%
-        assert result.combined_marginal_pct > 45  # At minimum the basic combined rate
-        assert result.combined_marginal_pct < 60  # Should not exceed 60%
+        assert result.combined_marginal > 45  # At minimum the basic combined rate
+        assert result.combined_marginal < 60  # Should not exceed 60%
