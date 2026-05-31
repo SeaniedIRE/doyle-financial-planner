@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from ..database import Base
@@ -8,7 +8,7 @@ class ACBTransaction(Base):
     __tablename__ = "acb_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
-    holding_id = Column(Integer, nullable=False)
+    holding_id = Column(Integer, ForeignKey("holdings.id"), nullable=False)
     transaction_date = Column(DateTime, nullable=False)
     transaction_type = Column(String, nullable=False)  # buy / sell / reinvest / return_of_capital / split / spinoff
     quantity = Column(Float, nullable=False)

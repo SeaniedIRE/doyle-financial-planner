@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum as SAEnum, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 import enum
@@ -46,7 +46,7 @@ class Holding(Base):
     __tablename__ = "holdings"
 
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     symbol = Column(String, nullable=False)
     exchange = Column(String, default="TSX")
     name = Column(String, nullable=False)
