@@ -161,16 +161,20 @@ Set up the **CA Backup** plugin on Unraid to back up
 ## Architecture
 
 ```
-Browser → Cloudflare Tunnel → host nginx (your reverse proxy)
-                                    ↓ proxy_pass http://<unraid-ip>:8000
-                               uvicorn FastAPI :8000  (single container)
-                                    ├── /api/*  — FastAPI routers
-                                    ├── /assets — Vite fingerprinted bundles
-                                    └── /*      — React SPA (index.html)
-                                    ↓
-                               SQLite (WAL mode)
-                               /app/data/financial_planner.db
+Browser → Cloudflare Tunnel
+               ↓
+         nginx container  (Unraid Docker network)
+               ↓  proxy_pass http://doyle-financial-planner:8000
+                  (container → container via Docker DNS — no host IP involved)
+         doyle-financial-planner container :8000
+               ├── /api/*   — FastAPI routers
+               ├── /assets  — Vite fingerprinted bundles (cache-busted)
+               └── /*       — React SPA (index.html fallback)
+               ↓
+         SQLite WAL  →  /app/data/financial_planner.db
+                         (volume-mounted from Unraid appdata)
 ```
 
-Single container: uvicorn serves both the API and the React SPA.
-No internal nginx — your existing host nginx routes to port 8000.
+Single container: uvicorn serves the API and the React SPA.
+nginx is a separate container on the same Docker network and reaches
+the app by container name (`doyle-financial-planner`), not by host IP.

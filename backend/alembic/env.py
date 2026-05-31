@@ -14,6 +14,18 @@ database_url = os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
+# Ensure the SQLite directory exists before we try to connect.
+# Covers the case where DATABASE_URL is unset and alembic.ini's absolute
+# path is used directly — the volume mount must exist first.
+_effective_url = config.get_main_option("sqlalchemy.url") or ""
+if _effective_url.startswith("sqlite:///") and ":memory:" not in _effective_url:
+    _db_path = _effective_url.lstrip("sqlite:/").lstrip("/")
+    # Reconstruct absolute path: sqlite:////app/... → /app/...
+    _db_path = "/" + _effective_url.replace("sqlite:////", "").replace("sqlite:///", "")
+    _db_dir = os.path.dirname(_db_path)
+    if _db_dir:
+        os.makedirs(_db_dir, exist_ok=True)
+
 # Import all models so Alembic can detect them
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
