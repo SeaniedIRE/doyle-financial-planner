@@ -6,11 +6,27 @@ import { fmt } from '../api/client'
 import ReactMarkdown from 'react-markdown'
 import { askClaude } from '../api/ai'
 
+// ── Employer top-up helpers ──────────────────────────────────────────────────
+
+/** Weekly employer top-up above EI. Returns 0 if EI already covers the target. */
+function calcWeeklyTopup(salaryAnnual: number, topupPct: number, eiWeekly: number): number {
+  const targetWeekly = (salaryAnnual / 52) * (topupPct / 100)
+  return Math.max(0, targetWeekly - eiWeekly)
+}
+
+/** Total employer top-up income for the leave period. */
+function calcTotalTopup(salaryAnnual: number, topupPct: number, topupWeeks: number, eiWeekly: number): number {
+  return calcWeeklyTopup(salaryAnnual, topupPct, eiWeekly) * topupWeeks
+}
+
 export default function MaternityPlanning() {
   const [leave1Year, setLeave1Year] = useState(2027)
   const [leave2Year, setLeave2Year] = useState(2028)
   const [saudyaBase, setSaudyaBase] = useState(106000)
   const [weeksStandard, setWeeksStandard] = useState(35)
+  // Employer top-up fields
+  const [topupWeeks, setTopupWeeks] = useState(0)
+  const [topupPct, setTopupPct] = useState(100)
   const [eiData1, setEiData1] = useState<any>(null)
   const [eiData2, setEiData2] = useState<any>(null)
   const [taxNormal, setTaxNormal] = useState<any>(null)
@@ -24,10 +40,13 @@ export default function MaternityPlanning() {
     setEiData1(ei1)
     setEiData2(ei2)
 
+    // Employer top-up is taxable employment income
+    const topup1 = calcTotalTopup(saudyaBase, topupPct, topupWeeks, ei1.weekly_benefit)
+
     const normal = await calculateTax({ year: leave1Year, employment_income: saudyaBase, bonus: 15000, province: 'ON' })
     const mat = await calculateTax({
       year: leave1Year,
-      employment_income: saudyaBase * 0.25,
+      employment_income: saudyaBase * 0.25 + topup1,   // pre-leave work + employer top-up
       bonus: 0,
       province: 'ON',
       is_maternity_leave: true,
@@ -39,9 +58,12 @@ export default function MaternityPlanning() {
 
   const getAdvice = async () => {
     setLoadingAI(true)
+    const topupDesc = topupWeeks > 0
+      ? `Her employer tops up to ${topupPct}% of salary for the first ${topupWeeks} weeks.`
+      : 'Her employer provides no top-up beyond EI.'
     try {
       const text = await askClaude(
-        `Saudya is going on maternity leave in early ${leave1Year} and again around Sep ${leave2Year}. Her regular income is $${saudyaBase.toLocaleString()} base plus $15,000 bonus. EI standard benefit = 55% of insurable earnings. Please advise on: (1) optimal RRSP contribution strategy during maternity years, (2) TFSA contributions — should she continue?, (3) income splitting opportunities with Sean (who earns ~$325K), (4) impact on FHSA contributions, (5) strategies to minimize combined household tax during these low-income years, (6) EI clawback rules if Saudya earns side income.`,
+        `Saudya is going on maternity leave in early ${leave1Year} and again around Sep ${leave2Year}. Her regular income is $${saudyaBase.toLocaleString()} base plus $15,000 bonus. EI standard benefit = 55% of insurable earnings. ${topupDesc} Please advise on: (1) optimal RRSP contribution strategy during maternity years, (2) TFSA contributions — should she continue?, (3) income splitting opportunities with Sean (who earns significantly more), (4) impact on FHSA contributions, (5) strategies to minimize combined household tax during these low-income years, (6) EI clawback rules if Saudya earns side income.`,
         true, leave1Year
       )
       setAiAdvice(text)
@@ -59,6 +81,8 @@ export default function MaternityPlanning() {
 
       <div className="card mb-6">
         <h2 className="font-semibold text-slate-200 mb-4">Settings</h2>
+
+        {/* Core leave settings */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="label">Leave 1 Year</label>
@@ -73,7 +97,7 @@ export default function MaternityPlanning() {
             </select>
           </div>
           <div>
-            <label className="label">Saudya Base Salary</label>
+            <label className="label">Base Salary</label>
             <input type="number" className="input" value={saudyaBase} onChange={e => setSaudyaBase(Number(e.target.value))} />
           </div>
           <div>
@@ -81,6 +105,46 @@ export default function MaternityPlanning() {
             <input type="number" className="input" value={weeksStandard} onChange={e => setWeeksStandard(Number(e.target.value))} />
           </div>
         </div>
+
+        {/* Employer top-up */}
+        <div className="border-t border-slate-700 pt-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-sm font-medium text-slate-300">Employer Top-Up</span>
+            <span className="text-xs text-slate-500">— many employers supplement EI for a fixed number of weeks</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="label">Top-Up Weeks</label>
+              <input
+                type="number" min={0} max={52} className="input"
+                value={topupWeeks}
+                onChange={e => setTopupWeeks(Number(e.target.value))}
+                placeholder="0"
+              />
+              <div className="text-xs text-slate-600 mt-1">0 = no top-up</div>
+            </div>
+            <div>
+              <label className="label">Top-Up Target %</label>
+              <input
+                type="number" min={0} max={100} className="input"
+                value={topupPct}
+                onChange={e => setTopupPct(Number(e.target.value))}
+                placeholder="100"
+              />
+              <div className="text-xs text-slate-600 mt-1">% of salary employer covers</div>
+            </div>
+            {topupWeeks > 0 && (
+              <div className="col-span-2 flex items-center">
+                <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2 text-sm text-blue-200/80">
+                  Employer pays top-up for <strong className="text-blue-200">{topupWeeks} weeks</strong> — bringing income to{' '}
+                  <strong className="text-blue-200">{topupPct}% of salary</strong> (EI covers the base ~55%;
+                  employer adds the difference)
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         <button onClick={runCalc} className="btn-primary">Calculate Impact</button>
       </div>
 
@@ -88,26 +152,65 @@ export default function MaternityPlanning() {
         <>
           {/* EI Benefits */}
           <div className="grid md:grid-cols-2 gap-4 mb-6">
-            {[{ year: leave1Year, data: eiData1, label: 'Leave 1' }, { year: leave2Year, data: eiData2, label: 'Leave 2' }].map(({ year, data, label }) => (
+            {[
+              { year: leave1Year, data: eiData1, label: 'Leave 1' },
+              { year: leave2Year, data: eiData2, label: 'Leave 2' },
+            ].map(({ year, data, label }) => {
+              const weeklyTopup   = topupWeeks > 0 ? calcWeeklyTopup(saudyaBase, topupPct, data?.weekly_benefit ?? 0) : 0
+              const totalTopup    = weeklyTopup * topupWeeks
+              const totalLeaveInc = (data?.annual_ei_benefit ?? 0) + totalTopup
+              return (
               <div key={year} className="card">
                 <h3 className="font-semibold text-slate-200 mb-3">{label} — {year}</h3>
                 <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-400">Annual EI Benefit</span><span className="text-blue-300 font-semibold">{fmt(data?.annual_ei_benefit ?? 0)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Weekly Benefit</span><span className="text-slate-200">{fmt(data?.weekly_benefit ?? 0)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Weeks</span><span className="text-slate-200">{data?.weeks}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Rate</span><span className="text-slate-200">{data?.benefit_rate_pct}%</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">EI Weeks</span><span className="text-slate-200">{data?.weeks}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">Weekly EI</span><span className="text-slate-200">{fmt(data?.weekly_benefit ?? 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">EI Rate</span><span className="text-slate-200">{data?.benefit_rate_pct}%</span></div>
+                  <div className="flex justify-between font-medium border-t border-slate-700 pt-2">
+                    <span className="text-slate-400">Annual EI Total</span>
+                    <span className="text-blue-300">{fmt(data?.annual_ei_benefit ?? 0)}</span>
+                  </div>
+
+                  {/* Employer top-up section */}
+                  {topupWeeks > 0 && (
+                    <>
+                      <div className="border-t border-slate-700 pt-2 mt-1">
+                        <div className="text-xs text-slate-500 uppercase tracking-wider mb-1.5">Employer Top-Up</div>
+                        <div className="flex justify-between"><span className="text-slate-400">Top-Up Weeks</span><span className="text-slate-200">{topupWeeks} wks</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Top-Up Target</span><span className="text-slate-200">{topupPct}% of salary</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Weekly Top-Up</span><span className="text-emerald-300">{fmt(weeklyTopup)}</span></div>
+                        <div className="flex justify-between font-medium mt-1">
+                          <span className="text-slate-400">Top-Up Total</span>
+                          <span className="text-emerald-300">{fmt(totalTopup)}</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-between font-semibold border-t border-slate-700 pt-2">
+                        <span className="text-slate-300">Total Leave Income</span>
+                        <span className="text-blue-200">{fmt(totalLeaveInc)}</span>
+                      </div>
+                    </>
+                  )}
+
                   <div className="text-xs text-amber-300/70 mt-2 border-t border-slate-700 pt-2">
                     ℹ {data?.note}
                   </div>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Tax comparison */}
           {taxNormal && taxMat && (
             <div className="card mb-6">
-              <h2 className="font-semibold text-slate-200 mb-4">Tax Impact — {leave1Year} (Saudya)</h2>
+              <div className="flex items-center gap-3 mb-4">
+                <h2 className="font-semibold text-slate-200">Tax Impact — {leave1Year} (Saudya)</h2>
+                {topupWeeks > 0 && (
+                  <span className="text-xs bg-emerald-900/30 border border-emerald-700/40 text-emerald-300 px-2 py-0.5 rounded-full">
+                    Includes {topupWeeks}-week employer top-up
+                  </span>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
