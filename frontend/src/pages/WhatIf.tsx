@@ -20,6 +20,8 @@ interface WhatIfRequest {
   override_saudya_fhsa?: number
   override_sean_margin?: number
   override_saudya_margin?: number
+  override_sean_cash?: number
+  override_saudya_cash?: number
   override_sean_base?: number
   override_saudya_base?: number
   override_house_purchase_year?: number
@@ -169,7 +171,7 @@ export default function WhatIf() {
   const [shouldSave,   setShouldSave  ] = useState(false)
   const [result,       setResult      ] = useState<YearResult[] | null>(null)
 
-  const emptyDeltas = () => ({ tfsa: '', rrsp: '', fhsa: '', margin: '', base: '' })
+  const emptyDeltas = () => ({ tfsa: '', rrsp: '', fhsa: '', margin: '', cash: '', base: '' })
   const [seanD,   setSeanD  ] = useState(emptyDeltas())
   const [saudyaD, setSaudyaD] = useState(emptyDeltas())
   const [houseYear, setHouseYear] = useState('')
@@ -220,10 +222,12 @@ export default function WhatIf() {
     applyDelta('override_sean_rrsp',     bal.sean.rrsp,     seanD.rrsp)
     applyDelta('override_sean_fhsa',     bal.sean.fhsa,     seanD.fhsa)
     applyDelta('override_sean_margin',   bal.sean.margin,   seanD.margin)
+    applyDelta('override_sean_cash',     bal.sean.cash,     seanD.cash)
     applyDelta('override_saudya_tfsa',   bal.saudya.tfsa,   saudyaD.tfsa)
     applyDelta('override_saudya_rrsp',   bal.saudya.rrsp,   saudyaD.rrsp)
     applyDelta('override_saudya_fhsa',   bal.saudya.fhsa,   saudyaD.fhsa)
     applyDelta('override_saudya_margin', bal.saudya.margin, saudyaD.margin)
+    applyDelta('override_saudya_cash',   bal.saudya.cash,   saudyaD.cash)
     if (seanD.base)   req.override_sean_base   = parseFloat(seanD.base)
     if (saudyaD.base) req.override_saudya_base = parseFloat(saudyaD.base)
     if (houseYear)    req.override_house_purchase_year = parseInt(houseYear)
@@ -260,8 +264,8 @@ export default function WhatIf() {
   const lastResult = result?.[result.length - 1]
 
   const anyDelta = [
-    seanD.tfsa, seanD.rrsp, seanD.fhsa, seanD.margin, seanD.base,
-    saudyaD.tfsa, saudyaD.rrsp, saudyaD.fhsa, saudyaD.margin, saudyaD.base,
+    seanD.tfsa, seanD.rrsp, seanD.fhsa, seanD.margin, seanD.cash, seanD.base,
+    saudyaD.tfsa, saudyaD.rrsp, saudyaD.fhsa, saudyaD.margin, saudyaD.cash, saudyaD.base,
     houseYear, houseDown,
   ].some(v => v !== '' && parseFloat(v || '0') !== 0)
 
@@ -316,9 +320,9 @@ export default function WhatIf() {
           <AccountRow label="Margin" current={bal.sean.margin} delta={seanD.margin} onDelta={v => setSeanD(d => ({ ...d, margin: v }))}
             note="No contribution limit — borrowed or self-funded"
           />
-          {bal.sean.cash > 0 && (
-            <InfoRow label="Cash (non-reg)" current={bal.sean.cash} note="Shown for reference — not yet in simulation engine" />
-          )}
+          <AccountRow label="Cash (non-reg)" current={bal.sean.cash} delta={seanD.cash} onDelta={v => setSeanD(d => ({ ...d, cash: v }))}
+            note="No contribution limit — taxable non-registered account"
+          />
 
           <div className="pt-3 mt-1">
             <label className="label text-xs">Base salary override (absolute, leave blank to use current)</label>
@@ -352,12 +356,10 @@ export default function WhatIf() {
           <AccountRow label="Margin" current={bal.saudya.margin} delta={saudyaD.margin} onDelta={v => setSaudyaD(d => ({ ...d, margin: v }))}
             note="No contribution limit — borrowed or self-funded"
           />
-          {bal.saudya.cash > 0 && (
-            <InfoRow label="Cash (non-reg)" current={bal.saudya.cash} note="Shown for reference — not yet in simulation engine" />
-          )}
-          {bal.saudya.lira > 0 && (
-            <InfoRow label="LIRA" current={bal.saudya.lira} note="Locked-in — cannot contribute further" />
-          )}
+          <AccountRow label="Cash (non-reg)" current={bal.saudya.cash} delta={saudyaD.cash} onDelta={v => setSaudyaD(d => ({ ...d, cash: v }))}
+            note="No contribution limit — taxable non-registered account"
+          />
+          <InfoRow label="LIRA" current={bal.saudya.lira} note="Locked-in from prior employer pension — cannot contribute further" />
 
           <div className="pt-3 mt-1">
             <label className="label text-xs">Base salary override (absolute, leave blank to use current)</label>

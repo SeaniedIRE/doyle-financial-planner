@@ -23,6 +23,8 @@ class WhatIfSimulation(Base):
     override_saudya_fhsa = Column(Float, nullable=True)
     override_sean_margin = Column(Float, nullable=True)
     override_saudya_margin = Column(Float, nullable=True)
+    override_sean_cash = Column(Float, nullable=True)
+    override_saudya_cash = Column(Float, nullable=True)
     override_sean_base = Column(Float, nullable=True)
     override_saudya_base = Column(Float, nullable=True)
     override_house_purchase_year = Column(Integer, nullable=True)
