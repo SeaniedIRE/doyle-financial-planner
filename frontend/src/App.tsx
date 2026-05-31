@@ -11,6 +11,9 @@ import HousePlanning from './pages/HousePlanning'
 import MaternityPlanning from './pages/MaternityPlanning'
 import AIAdvisor from './pages/AIAdvisor'
 import Settings from './pages/Settings'
+import WhatIf from './pages/WhatIf'
+import TrustAccounts from './pages/TrustAccounts'
+import FamilyMembers from './pages/FamilyMembers'
 
 export default function App() {
   return (
@@ -26,6 +29,9 @@ export default function App() {
           <Route path="forecasts" element={<Forecasts />} />
           <Route path="house" element={<HousePlanning />} />
           <Route path="maternity" element={<MaternityPlanning />} />
+          <Route path="whatif" element={<WhatIf />} />
+          <Route path="trusts" element={<TrustAccounts />} />
+          <Route path="family" element={<FamilyMembers />} />
           <Route path="ai" element={<AIAdvisor />} />
           <Route path="settings" element={<Settings />} />
         </Route>

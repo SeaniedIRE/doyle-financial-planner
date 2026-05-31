@@ -1,166 +1,170 @@
 # Doyle Financial Planner
 
-Personal financial planning application for Sean & Saudya Doyle.
+Private Canadian financial planning application. Tracks investment accounts, ACB, tax
+planning (FHSA/RRSP/TFSA), what-if scenarios, family trusts, maternity leave, and house
+purchase planning. Runs as a single Docker container on Unraid.
 
 **Features:**
 - Live portfolio dashboard with all account balances
 - Adjusted Cost Base (ACB) tracker with full CRA-compliant history
-- Canadian tax calculator (Federal + Ontario, CRA 2026 rules)
-- Portfolio forecasting with conservative / moderate / optimistic growth scenarios
-- FHSA + RRSP Home Buyers' Plan strategy for house purchase (2030/2031)
+- Canadian tax calculator (Federal + Ontario, 2026 CRA rules)
+- Portfolio forecasting — conservative / moderate / optimistic scenarios
+- **What-If Simulator** — override any account or income value and see 40-year impact
+- FHSA + RRSP Home Buyers' Plan strategy for house purchase planning
 - Maternity leave financial impact modeling
-- Capital loss harvesting analysis (PSNY and others)
-- Scenario builder — compare "what if" paths side by side
-- AI Advisor powered by Claude — ask anything, get CRA-compliant answers
+- Capital loss harvesting analysis
+- **Family Trusts** — track assets held inside family trust structures
+- **Family Members** — manage adults and children; supports expanding family over time
+- Annual CRA rule verification prompt — catches when TFSA limits or brackets change
+- AI Advisor powered by Claude
 
 ---
 
-## Deployment on Unraid (Step-by-Step)
+## Install on Unraid (one-click — recommended)
 
-### Step 1 — Prerequisites
+The app is published as a Docker image to GitHub Container Registry and ships
+with an Unraid Community Apps template.
 
-Make sure these are installed on your Unraid server:
-- **Docker** (comes with Unraid)
-- **git** — install via Unraid terminal: `apt-get install git` or through the NerdTools plugin
+### Option A — Community Apps XML template
 
-### Step 2 — Clone the repository
+1. In Unraid, go to **Apps → Templates**
+2. Add the following URL to your template repositories (Settings → Docker → Template repositories):
+   ```
+   https://raw.githubusercontent.com/SeaniedIRE/doyle-financial-planner/main/unraid/doyle-financial-planner.xml
+   ```
+3. Search for "doyle-financial-planner" in Apps and click Install
+4. Fill in your Anthropic API key (optional — AI Advisor only)
+5. Click Apply
 
-In the Unraid terminal (or SSH into your server):
+### Option B — Manual Docker run
 
 ```bash
-cd /mnt/user/appdata
+docker run -d \
+  --name doyle-financial-planner \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /mnt/user/appdata/doyle-financial-planner/data:/app/data \
+  -e ANTHROPIC_API_KEY=your-key-here \
+  ghcr.io/seaniedire/doyle-financial-planner:latest
+```
+
+### Updating
+
+Click **Check for Updates** in the Unraid Docker tab to pull the latest image.
+The container will restart automatically. Your data is never touched by updates.
+
+---
+
+## Local development (Mac)
+
+```bash
 git clone https://github.com/SeaniedIRE/doyle-financial-planner.git
 cd doyle-financial-planner
-```
-
-### Step 3 — Create your .env file
-
-```bash
 cp .env.example .env
-nano .env
+# Add your ANTHROPIC_API_KEY to .env (optional)
+docker compose up --build
+# App runs at http://localhost:8080
 ```
 
-Fill in your **Anthropic API key** (get it from console.anthropic.com — needed for AI Advisor).
-Save with `Ctrl+X`, then `Y`, then `Enter`.
-
-### Step 4 — Create the data directory
+Or run the backend and frontend separately without Docker:
 
 ```bash
-mkdir -p data
-```
+# Terminal 1 — backend
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 
-This is where your database lives. **Back up this folder regularly.**
-
-### Step 5 — Build and start
-
-```bash
-docker-compose up -d --build
-```
-
-This will:
-1. Build the Python backend and React frontend Docker images (~3–5 minutes first time)
-2. Start all three containers (backend, frontend, nginx)
-3. Seed the database with your holdings from the CSV files
-
-### Step 6 — Verify it's running
-
-Open a browser on your local network and go to:
-```
-http://YOUR-UNRAID-IP:8080
-```
-
-You should see the dashboard with all your accounts loaded.
-
-### Step 7 — Set up Cloudflare tunnel
-
-In your Cloudflare Zero Trust dashboard:
-1. Go to **Access → Tunnels**
-2. Edit your existing tunnel (or create one)
-3. Add a Public Hostname:
-   - **Subdomain:** finance (or whatever you prefer)
-   - **Domain:** your-domain.com
-   - **Service:** http://localhost:8080
-4. Save
-
-Your app is now accessible at `https://finance.your-domain.com` — protected by Cloudflare Access.
-
-### Updating the app
-
-```bash
-cd /mnt/user/appdata/doyle-financial-planner
-git pull
-docker-compose up -d --build
+# Terminal 2 — frontend
+cd frontend
+npm install
+npm run dev
+# Vite proxies /api/* to http://localhost:8000
 ```
 
 ---
 
-## Updating Holdings Values
+## Running the test suite
 
-Holdings values change daily. To update them:
+```bash
+cd backend
+pip install -r requirements.txt pytest pytest-cov
+pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+```
 
-**Option A — CSV Import (recommended, takes 30 seconds)**
-1. Download your holdings CSV from your broker
-2. Go to **Settings → Import Holdings** in the app
-3. Paste the CSV contents and click Import
-
-**Option B — Manual edit**
-1. Go to **Holdings & Accounts**
-2. Click the edit icon (pencil) next to any holding
-3. Update the price, quantity, or market value
-4. Click Save
+Tests cover:
+- CRA tax formulas (federal + Ontario brackets, TFSA/RRSP/FHSA limits)
+- ACB calculator (buy/sell, fees, reinvested distributions, return of capital, splits, superficial loss)
+- Forecast engine (compounding math, maternity leave, FHSA withdrawal at house purchase)
 
 ---
 
-## Backing Up Your Data
+## Updating your holdings
+
+Holdings change daily. To update them:
+
+**Option A — Manual edit:** Go to **Holdings & Accounts**, click the edit icon next to any holding.
+
+**Option B — CSV Import:** Go to **Settings → Import Holdings**, paste your broker CSV.
+
+---
+
+## Backing up your data
 
 Your financial data is stored in:
 ```
 /mnt/user/appdata/doyle-financial-planner/data/financial_planner.db
 ```
 
-**To back up:**
+**Quick backup:**
 ```bash
-cp /mnt/user/appdata/doyle-financial-planner/data/financial_planner.db \
-   /mnt/user/backups/financial_planner_$(date +%Y%m%d).db
+./scripts/backup.sh /mnt/user/backups/financial-planner
 ```
 
-Set up Unraid's automated backup (CA Backup plugin) to include the `/mnt/user/appdata/doyle-financial-planner/data/` folder.
+The entrypoint script also creates an automatic pre-start backup each time the container
+restarts (stored in `/app/data/backups/`, last 14 kept).
+
+Set up the **CA Backup** plugin on Unraid to back up
+`/mnt/user/appdata/doyle-financial-planner/data/` to your offsite location.
 
 ---
 
-## Security Notes
+## Security
 
-- The application is protected by Cloudflare Access (Zero Trust) — only you can access it
-- No passwords are stored in the app itself (auth is handled by Cloudflare)
-- Your API key is stored only in the `.env` file on your server (never committed to GitHub)
-- The `.gitignore` ensures `.env` and the database are never pushed to GitHub
-- Security headers (CSP, X-Frame-Options, etc.) are set in nginx
+- Protected by Cloudflare Access (Zero Trust) — no app-level login needed
+- Your API key is in `.env` on the server only — never committed to git
+- `.gitignore` ensures `.env` and the database are never pushed to GitHub
+- Security headers (CSP, X-Frame-Options, HSTS) set in nginx
 
 ---
 
-## CRA Tax Rules Used
+## CRA tax rules used
 
-| Rule | Source | Value |
-|------|--------|-------|
-| Capital gains inclusion | ITA s.38 | 50% |
-| TFSA annual limit 2026 | CRA | $7,000 |
-| RRSP annual limit 2026 | CRA | $32,490 |
-| FHSA annual limit | ITA s.146.6 | $8,000 |
-| FHSA lifetime limit | ITA s.146.6 | $40,000 |
-| HBP withdrawal limit | CRA | $35,000/person |
-| Superficial loss window | ITA s.54 | 30 days before/after |
-| Margin interest deduction | ITA s.20(1)(c) | Full deduction |
-| EI maternity benefit rate | Service Canada | 55% of insurable earnings |
+| Rule | ITA section | Value (2026) |
+|------|-------------|--------------|
+| Capital gains inclusion | s.38(a) | 50% |
+| TFSA annual limit | s.146.2 | $7,000 |
+| RRSP annual limit | s.146 | $32,490 |
+| FHSA annual limit | s.146.6 | $8,000 |
+| FHSA lifetime limit | s.146.6 | $40,000 |
+| Superficial loss window | s.54 | 30 days before/after |
+| Margin interest deduction | s.20(1)(c) | Fully deductible |
+| EI maternity benefit | Service Canada | 55% of insurable earnings |
+| Federal basic personal amount | s.118(1)(c) | $15,705 |
 
-*Always verify with CRA My Account and a qualified tax professional for your specific situation.*
+*Always verify with CRA My Account and a qualified tax professional for your situation.*
 
 ---
 
 ## Architecture
 
 ```
-Browser → Cloudflare Tunnel → Unraid :8080 → nginx → frontend (React)
-                                                    ↘ backend API (FastAPI + SQLite)
+Browser → Cloudflare Tunnel → Unraid :8080 → nginx (single container)
+                                                  ↓ /api/* proxy
+                                               uvicorn FastAPI
+                                                  ↓
+                                               SQLite (WAL mode)
+                                               /app/data/financial_planner.db
 ```
 
-Three Docker containers: `financial-planner-nginx`, `financial-planner-frontend`, `financial-planner-backend`
+Single all-in-one container: nginx + uvicorn managed by supervisord.
+This lets Unraid's "Check for Updates" work with a single container entry.

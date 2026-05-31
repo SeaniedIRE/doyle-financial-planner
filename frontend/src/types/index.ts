@@ -36,12 +36,14 @@ export interface ACBTransaction {
   id: number
   holding_id: number
   transaction_date: string
+  date: string           // API may return either field name
   transaction_type: string
   quantity: number
   price_per_share_cad: number
   fees_cad: number
   fx_rate: number
   total_cost_cad: number
+  shares_after: number
   acb_per_share_after: number
   total_acb_after: number
   capital_gain_loss_cad: number

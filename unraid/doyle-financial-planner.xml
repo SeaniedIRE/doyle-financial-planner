@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>doyle-financial-planner</Name>
+  <Repository>ghcr.io/seaniedire/doyle-financial-planner:latest</Repository>
+  <Registry>https://ghcr.io/seaniedire/doyle-financial-planner</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/SeaniedIRE/doyle-financial-planner/issues</Support>
+  <Project>https://github.com/SeaniedIRE/doyle-financial-planner</Project>
+  <Overview>
+    Private Canadian financial planning application for the Doyle family.
+    Tracks investment accounts, ACB, tax planning, FHSA/RRSP/TFSA, and includes
+    an AI advisor powered by Claude. Designed for 40+ years of family financial history.
+  </Overview>
+  <Category>Productivity: Finance:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/SeaniedIRE/doyle-financial-planner/main/unraid/doyle-financial-planner.xml</TemplateURL>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <DateInstalled/>
+
+  <!-- Port mapping: access the app at http://UNRAID-IP:8080 -->
+  <Config
+    Name="Web UI Port"
+    Target="8080"
+    Default="8080"
+    Mode="tcp"
+    Description="Port to access the financial planner web interface. Open this in your browser."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8080</Config>
+
+  <!-- Data volume: your financial data lives here — BACK THIS UP -->
+  <Config
+    Name="Data Storage"
+    Target="/app/data"
+    Default="/mnt/user/appdata/doyle-financial-planner/data"
+    Mode="rw"
+    Description="Where your financial database is stored. Back up this folder regularly. Do not change this path after first use."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/doyle-financial-planner/data</Config>
+
+  <!-- Anthropic API key for AI Advisor features -->
+  <Config
+    Name="Anthropic API Key"
+    Target="ANTHROPIC_API_KEY"
+    Default=""
+    Mode=""
+    Description="Your Anthropic API key. Get one free at console.anthropic.com. Required for the AI Advisor feature. The app works without it but AI questions will be disabled."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"/>
+
+  <!-- CAD/USD exchange rate — update periodically -->
+  <Config
+    Name="CAD/USD Exchange Rate"
+    Target="FX_CAD_USD"
+    Default="1.3650"
+    Mode=""
+    Description="Current Canadian dollar to US dollar rate (CAD per 1 USD). Used to convert USD-denominated positions. Update this when rates change significantly."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">1.3650</Config>
+</Container>

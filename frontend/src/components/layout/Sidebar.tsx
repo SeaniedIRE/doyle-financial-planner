@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Wallet, Calculator, TrendingUp, DollarSign,
   GitBranch, Home, Baby, Bot, Settings, ChevronRight,
+  Sparkles, Shield, Users,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -13,8 +14,11 @@ const nav = [
   { to: '/income', icon: TrendingUp, label: 'Income' },
   { to: '/scenarios', icon: GitBranch, label: 'Scenarios' },
   { to: '/forecasts', icon: TrendingUp, label: 'Forecasts' },
+  { to: '/whatif', icon: Sparkles, label: 'What-If Simulator' },
   { to: '/house', icon: Home, label: 'House Planning' },
   { to: '/maternity', icon: Baby, label: 'Maternity Leave' },
+  { to: '/trusts', icon: Shield, label: 'Family Trusts' },
+  { to: '/family', icon: Users, label: 'Family Members' },
   { to: '/ai', icon: Bot, label: 'AI Advisor' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]

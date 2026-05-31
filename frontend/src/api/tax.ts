@@ -10,8 +10,8 @@ export const getTaxComparison = (year: number) =>
 export const getContributionRoom = (person: string, year: number, canadaSince = 2018) =>
   api.get(`/tax/contribution-room/${person}/${year}?canada_since=${canadaSince}`).then(r => r.data)
 
-export const getMaternityEI = (year: number, earnings: number) =>
-  api.get(`/tax/maternity-ei/${year}?insurable_earnings=${earnings}`).then(r => r.data)
+export const getMaternityEI = (year: number, earnings: number, weeks?: number) =>
+  api.get(`/tax/maternity-ei/${year}?insurable_earnings=${earnings}${weeks !== undefined ? `&weeks=${weeks}` : ''}`).then(r => r.data)
 
 export const getIncome = (person?: string) =>
   person
