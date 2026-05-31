@@ -89,8 +89,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Accept"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],   # reflect any headers; Cloudflare / browsers add many
     max_age=600,
 )
 
@@ -132,21 +132,38 @@ app.include_router(taxcheck_router.router)
 
 @app.on_event("startup")
 async def startup_event():
-    # Integrity check before any writes (ASVS V6.2 / data protection)
+    from .config import settings as _settings
+
+    # ── Config / env-var diagnostic block ─────────────────────────────
+    # Always emitted so the container log is self-diagnosing.
+
+    # API key — show first 10 + last 4 chars only
+    _key = _settings.anthropic_api_key
+    if _key:
+        _key_display = f"{_key[:10]}...{_key[-4:]}" if len(_key) > 14 else "SET (short)"
+        logger.info(f"CONFIG  ANTHROPIC_API_KEY : {_key_display} ✓")
+    else:
+        logger.warning(
+            "CONFIG  ANTHROPIC_API_KEY : NOT SET — "
+            "add it to .env or as a Docker environment variable. "
+            "AI Advisor will return a placeholder message until it is set."
+        )
+
+    logger.info(f"CONFIG  DATABASE_URL      : {_settings.database_url}")
+    logger.info(f"CONFIG  CORS origins      : {_CORS_ORIGINS}")
+    logger.info(f"CONFIG  TRUSTED_HOSTS     : {_TRUSTED_HOSTS}")
+    logger.info(f"CONFIG  Docs UI           : {'enabled' if _DOCS_ENABLED else 'disabled (set DOCS_ENABLED=1 to enable)'}")
+
+    # ── DB integrity check ─────────────────────────────────────────────
     if not run_integrity_check():
         logger.critical(
             "Database integrity check failed. Refusing to start to prevent data corruption. "
             "Restore from backup: /app/data/backups/"
         )
         # Do not raise — let the app start in read-only-like mode so the admin can debug.
-        # A failed integrity check is logged at CRITICAL level.
 
     seed_database()
-    logger.info(
-        "Doyle Financial Planner started. "
-        f"Docs={'enabled' if _DOCS_ENABLED else 'disabled'}. "
-        f"CORS origins={_CORS_ORIGINS}"
-    )
+    logger.info("Doyle Financial Planner started OK.")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -157,6 +174,42 @@ async def startup_event():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "Doyle Financial Planner"}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Debug config endpoint — only active when DEBUG_ENV=1 is set.
+# Shows which env vars are loaded (values masked).
+# Remove DEBUG_ENV from the container once the issue is diagnosed.
+# ─────────────────────────────────────────────────────────────────────
+
+_DEBUG_ENV = os.environ.get("DEBUG_ENV", "0").lower() in ("1", "true", "yes")
+
+if _DEBUG_ENV:
+    from .config import settings as _dbg_settings
+
+    @app.get("/api/debug/config")
+    def debug_config():
+        """Return masked config — only active when DEBUG_ENV=1 is set in the container."""
+        _key = _dbg_settings.anthropic_api_key
+        if _key:
+            key_status = f"{_key[:10]}...{_key[-4:]}"
+        else:
+            key_status = "NOT SET"
+        return {
+            "debug_mode": True,
+            "anthropic_api_key": key_status,
+            "database_url": _dbg_settings.database_url,
+            "cors_allowed_origins": _CORS_ORIGINS,
+            "trusted_hosts": _TRUSTED_HOSTS,
+            "docs_enabled": _DOCS_ENABLED,
+            "env_vars_present": {
+                "ANTHROPIC_API_KEY": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                "DATABASE_URL": bool(os.environ.get("DATABASE_URL")),
+                "CORS_ALLOWED_ORIGINS": bool(os.environ.get("CORS_ALLOWED_ORIGINS")),
+                "TRUSTED_HOSTS": bool(os.environ.get("TRUSTED_HOSTS")),
+                "APP_ENV": os.environ.get("APP_ENV", "<not set>"),
+            },
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────

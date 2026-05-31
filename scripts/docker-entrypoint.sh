@@ -10,6 +10,22 @@ echo "======================================"
 echo " Doyle Financial Planner — Starting"
 echo "======================================"
 
+# ── Env diagnostics (always shown so the log is self-diagnosing) ──────
+echo ""
+echo "── Environment ──────────────────────"
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    _preview=$(echo "$ANTHROPIC_API_KEY" | cut -c1-10)
+    echo "  ANTHROPIC_API_KEY : SET  (${_preview}...)"
+else
+    echo "  ANTHROPIC_API_KEY : NOT SET  ← AI Advisor will not work"
+fi
+echo "  DATABASE_URL      : ${DATABASE_URL:-<not set — using default>}"
+echo "  CORS origins      : ${CORS_ALLOWED_ORIGINS:-<not set — using localhost defaults>}"
+echo "  TRUSTED_HOSTS     : ${TRUSTED_HOSTS:-<not set — using localhost defaults>}"
+echo "  DEBUG_ENV         : ${DEBUG_ENV:-0}"
+echo "─────────────────────────────────────"
+echo ""
+
 # Ensure data directories exist
 mkdir -p "$DATA_DIR" "$BACKUP_DIR"
 
