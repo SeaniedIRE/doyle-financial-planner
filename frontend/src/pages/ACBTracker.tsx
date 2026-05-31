@@ -159,11 +159,19 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
   )
 
   // Sale inputs
+  // Suggested marginal rates per owner — update these to match current income
+  const RATE_SUGGESTIONS: Record<string, number> = {
+    sean:  53,   // top federal+ON bracket
+    saudya: 43,  // mid bracket
+    joint:  43,  // default to lower earner for joint gains
+  }
+
   const [selAccId,  setSelAccId]  = useState<number | null>(null)
   const [selHoldId, setSelHoldId] = useState<number | null>(null)
   const [saleInput, setSaleInput] = useState('')
   const [mode, setMode]           = useState<'dollars' | 'shares'>('dollars')
   const [margRate, setMargRate]   = useState(43)
+  const [margRateEdited, setMargRateEdited] = useState(false)
   // Map<holdingId, dollarAmountToRealise> — not in map means unselected
   const [offsetIds, setOffsetIds] = useState<Map<number, number>>(new Map())
 
@@ -259,10 +267,16 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
             className="input"
             value={selAccId ?? ''}
             onChange={e => {
-              setSelAccId(e.target.value ? Number(e.target.value) : null)
+              const newId = e.target.value ? Number(e.target.value) : null
+              setSelAccId(newId)
               setSelHoldId(null)
               setSaleInput('')
               setOffsetIds(new Map())
+              // Auto-suggest marginal rate for this account's owner (unless user has manually changed it)
+              if (!margRateEdited && newId) {
+                const acc = nonRegAccounts.find(a => a.id === newId)
+                if (acc) setMargRate(RATE_SUGGESTIONS[acc.owner] ?? 43)
+              }
             }}
           >
             <option value="">— pick account —</option>
@@ -323,14 +337,32 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
         </div>
 
         <div>
-          <label className="label">Your Marginal Rate (%)</label>
+          <label className="label">
+            Marginal Rate (%)
+            {selAcc && !margRateEdited && (
+              <span className="ml-2 text-xs text-blue-400 font-normal">
+                suggested for {selAcc.owner}
+              </span>
+            )}
+            {margRateEdited && (
+              <button
+                className="ml-2 text-xs text-slate-500 hover:text-slate-300 underline font-normal"
+                onClick={() => {
+                  if (selAcc) setMargRate(RATE_SUGGESTIONS[selAcc.owner] ?? 43)
+                  setMargRateEdited(false)
+                }}
+              >
+                reset to suggested
+              </button>
+            )}
+          </label>
           <input
             type="number"
             className="input"
             value={margRate}
-            onChange={e => setMargRate(Number(e.target.value))}
+            onChange={e => { setMargRate(Number(e.target.value)); setMargRateEdited(true) }}
           />
-          <div className="text-xs text-slate-500 mt-1">Sean ~53% · Saudya ~43%</div>
+          <div className="text-xs text-slate-500 mt-1">Sean ~53% · Saudya ~43% · Joint: use lower earner's rate</div>
         </div>
       </div>
 

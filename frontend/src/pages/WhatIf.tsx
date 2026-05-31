@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getAccounts, getPortfolioTotals, getSettings } from '../api/accounts'
+import { getPortfolioTotals, getSettings } from '../api/accounts'
 import api from '../api/client'
 import { fmt } from '../api/client'
 import {
@@ -33,109 +33,125 @@ interface YearResult {
   events: string[]
 }
 
+// ─── TFSA limits (matches backend tax_engine.py exactly) ─────────────────────
+
+const TFSA_LIMITS: Record<number, number> = {
+  2009: 5000, 2010: 5000, 2011: 5000, 2012: 5000,
+  2013: 5500, 2014: 5500, 2015: 10000,
+  2016: 5500, 2017: 5500, 2018: 5500,
+  2019: 6000, 2020: 6000, 2021: 6000, 2022: 6000,
+  2023: 6500, 2024: 7000, 2025: 7000, 2026: 7000,
+}
+
+function tfsaCumulativeRoom(canadaSince: number, year = 2026): number {
+  let room = 0
+  for (let y = Math.max(2009, canadaSince); y <= year; y++) {
+    room += TFSA_LIMITS[y] ?? 7000
+  }
+  return room
+}
+
 // ─── Contribution limit helpers ───────────────────────────────────────────────
 
 const FHSA_LIFETIME = 40_000
 const FHSA_ANNUAL   = 8_000
-const TFSA_ANNUAL   = 7_000      // 2026
-const RRSP_CAP      = 32_490     // 2026 dollar cap (18% of income up to this)
+const RRSP_CAP      = 32_490   // 2026 dollar cap
 
 function fhsaLifetimeRemaining(contributed: number) {
   return Math.max(0, FHSA_LIFETIME - contributed)
 }
 
 function fhsaAnnualRemaining(contributed: number, openYear: number, currentYear = 2026) {
-  // Room = $8k × years since open, max $40k total, minus what's already contributed
   const yearsOpen = Math.max(0, currentYear - openYear + 1)
   const maxRoom   = Math.min(FHSA_LIFETIME, yearsOpen * FHSA_ANNUAL)
   return Math.max(0, maxRoom - contributed)
 }
 
-// ─── Limit badge ─────────────────────────────────────────────────────────────
+// ─── FHSA limit badge ─────────────────────────────────────────────────────────
 
-function LimitBadge({ label, used, cap, annual }: {
-  label: string; used: number; cap?: number; annual?: number
-}) {
-  const pct      = cap ? Math.min(100, (used / cap) * 100) : null
-  const nearFull = pct !== null && pct >= 90
-  const full     = pct !== null && pct >= 100
+function FHSABadge({ contributed, openYear }: { contributed: number; openYear: number }) {
+  const pct       = Math.min(100, (contributed / FHSA_LIFETIME) * 100)
+  const maxed     = contributed >= FHSA_LIFETIME
+  const nearMaxed = pct >= 80
+  const annualRoom = fhsaAnnualRemaining(contributed, openYear)
 
   return (
     <div className={`text-xs rounded-lg px-2 py-1 border ${
-      full     ? 'bg-red-900/30 border-red-700/50 text-red-300' :
-      nearFull ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' :
-                 'bg-slate-800/60 border-slate-700/40 text-slate-400'
+      maxed     ? 'bg-red-900/30 border-red-700/50 text-red-300' :
+      nearMaxed ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' :
+                  'bg-slate-800/60 border-slate-700/40 text-slate-400'
     }`}>
-      {full ? '⛔ ' : nearFull ? '⚠ ' : ''}
-      {label}
-      {annual !== undefined && <span className="ml-1 opacity-70">+{fmt(annual)}/yr</span>}
-      {cap !== undefined && (
-        <span className="ml-1">
-          {fmt(used)} / {fmt(cap)}
-          {full ? ' — MAXED' : nearFull ? ' — almost full' : ''}
-        </span>
+      {maxed ? '⛔ Lifetime max reached — no more FHSA contributions' : (
+        <>
+          Lifetime: {fmt(contributed)} / {fmt(FHSA_LIFETIME)}
+          {nearMaxed && ' ⚠ near limit'}
+          <span className="mx-1 opacity-40">·</span>
+          {fmt(annualRoom)} room now
+        </>
       )}
     </div>
   )
 }
 
-// ─── Account row ──────────────────────────────────────────────────────────────
+// ─── Account row (adjustable) ─────────────────────────────────────────────────
 
 function AccountRow({
-  label, current, delta, onDelta, limitBadge, note,
+  label, current, delta, onDelta, badge, note,
 }: {
   label: string
   current: number
   delta: string
   onDelta: (v: string) => void
-  limitBadge?: React.ReactNode
+  badge?: React.ReactNode
   note?: string
 }) {
   const deltaNum  = parseFloat(delta) || 0
   const projected = current + deltaNum
 
   return (
-    <div className="grid grid-cols-12 gap-3 items-center py-3 border-b border-slate-800 last:border-0">
-      {/* Label + badge */}
-      <div className="col-span-12 md:col-span-4">
-        <div className="text-sm font-medium text-slate-200">{label}</div>
-        {limitBadge && <div className="mt-1">{limitBadge}</div>}
-        {note && <div className="text-xs text-slate-600 mt-0.5">{note}</div>}
+    <div className="py-3 border-b border-slate-800 last:border-0">
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-200">{label}</div>
+          {badge && <div className="mt-1">{badge}</div>}
+          {note && <div className="text-xs text-slate-600 mt-0.5">{note}</div>}
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-xs text-slate-500">Current</div>
+          <div className="text-sm font-medium text-slate-300">{fmt(current)}</div>
+        </div>
       </div>
-
-      {/* Current balance */}
-      <div className="col-span-4 md:col-span-2 text-right">
-        <div className="text-xs text-slate-500 mb-0.5">Current</div>
-        <div className="text-sm text-slate-300 font-medium">{fmt(current)}</div>
-      </div>
-
-      {/* Delta input */}
-      <div className="col-span-8 md:col-span-3">
-        <div className="text-xs text-slate-500 mb-0.5">Add / Remove</div>
-        <div className="relative">
+      <div className="flex items-center gap-2 mt-2">
+        <div className="flex-1 relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs">+$</span>
           <input
             type="number"
-            className="input pl-8 text-sm"
-            placeholder="0"
+            className="input pl-8 text-sm h-9"
+            placeholder="0  (add or subtract)"
             value={delta}
             onChange={e => onDelta(e.target.value)}
           />
         </div>
-      </div>
-
-      {/* Projected */}
-      <div className="col-span-12 md:col-span-3 text-right">
-        <div className="text-xs text-slate-500 mb-0.5">Projected start</div>
-        <div className={`text-sm font-semibold ${deltaNum > 0 ? 'text-emerald-400' : deltaNum < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-          {fmt(projected)}
-          {deltaNum !== 0 && (
-            <span className="ml-1 text-xs font-normal opacity-70">
-              ({deltaNum > 0 ? '+' : ''}{fmt(deltaNum)})
-            </span>
-          )}
+        <div className={`text-sm font-semibold text-right w-28 shrink-0 ${
+          deltaNum > 0 ? 'text-emerald-400' : deltaNum < 0 ? 'text-red-400' : 'text-slate-600'
+        }`}>
+          {deltaNum !== 0 ? fmt(projected) : <span className="text-slate-700">unchanged</span>}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Info row (read-only balance, no simulation override) ─────────────────────
+
+function InfoRow({ label, current, note }: { label: string; current: number; note?: string }) {
+  return (
+    <div className="py-3 border-b border-slate-800 last:border-0 flex items-center justify-between">
+      <div>
+        <div className="text-sm font-medium text-slate-400">{label}</div>
+        {note && <div className="text-xs text-slate-600 mt-0.5">{note}</div>}
+      </div>
+      <div className="text-sm text-slate-400">{fmt(current)}</div>
     </div>
   )
 }
@@ -145,85 +161,79 @@ function AccountRow({
 export default function WhatIf() {
   const qc = useQueryClient()
 
-  // ── Data ──────────────────────────────────────────────────────────────────
-  const { data: totals    } = useQuery({ queryKey: ['totals'],    queryFn: getPortfolioTotals })
-  const { data: settings  } = useQuery({ queryKey: ['settings'],  queryFn: getSettings })
+  const { data: totals   } = useQuery({ queryKey: ['totals'],   queryFn: getPortfolioTotals })
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
 
-  // ── Scenario state ────────────────────────────────────────────────────────
   const [scenarioName, setScenarioName] = useState('My What-If')
   const [description,  setDescription ] = useState('')
   const [shouldSave,   setShouldSave  ] = useState(false)
   const [result,       setResult      ] = useState<YearResult[] | null>(null)
 
-  // Per-person account deltas (string so empty input works cleanly)
-  const emptyDeltas = () => ({
-    tfsa: '', rrsp: '', fhsa: '', margin: '', base: ''
-  })
-  const [seanDeltas,  setSeanDeltas ] = useState(emptyDeltas())
-  const [saudyaDeltas,setSaudyaDeltas] = useState(emptyDeltas())
-  const [houseYear,   setHouseYear  ] = useState('')
-  const [houseDown,   setHouseDown  ] = useState('')
+  const emptyDeltas = () => ({ tfsa: '', rrsp: '', fhsa: '', margin: '', base: '' })
+  const [seanD,   setSeanD  ] = useState(emptyDeltas())
+  const [saudyaD, setSaudyaD] = useState(emptyDeltas())
+  const [houseYear, setHouseYear] = useState('')
+  const [houseDown, setHouseDown] = useState('')
 
-  // ── Derived current balances ───────────────────────────────────────────────
+  // ── Current balances from portfolio totals ────────────────────────────────
   const bal = useMemo(() => {
-    const t = totals ?? {}
-    const g = (owner: string, type: string) =>
-      (t[owner]?.[type]?.market_value_cad ?? 0) as number
+    const g = (owner: string, type: string): number =>
+      (totals?.[owner]?.[type]?.market_value_cad ?? 0) as number
     return {
-      sean:  { tfsa: g('sean','TFSA'), rrsp: g('sean','RRSP'), fhsa: g('sean','FHSA'), margin: g('sean','Margin') },
-      saudya:{ tfsa: g('saudya','TFSA'), rrsp: g('saudya','RRSP'), fhsa: g('saudya','FHSA'), margin: g('saudya','Margin') },
+      sean: {
+        tfsa: g('sean','TFSA'), rrsp: g('sean','RRSP'),
+        fhsa: g('sean','FHSA'), margin: g('sean','Margin'),
+        cash: g('sean','Cash'),
+      },
+      saudya: {
+        tfsa: g('saudya','TFSA'), rrsp: g('saudya','RRSP'),
+        fhsa: g('saudya','FHSA'), margin: g('saudya','Margin'),
+        cash: g('saudya','Cash'), lira: g('saudya','LIRA'),
+      },
     }
   }, [totals])
 
-  // ── FHSA tracking from settings ──────────────────────────────────────────
+  // ── Settings-derived values ───────────────────────────────────────────────
+  const canadaSinceSean   = parseInt(settings?.sean_canada_since   ?? '2015') || 2015
+  const canadaSinceSaudya = parseInt(settings?.saudya_canada_since ?? '2015') || 2015
   const fhsaContribSean   = parseFloat(settings?.fhsa_contributed_sean   ?? '0') || 0
   const fhsaContribSaudya = parseFloat(settings?.fhsa_contributed_saudya ?? '0') || 0
   const fhsaOpenSean      = parseInt(settings?.fhsa_opened_year_sean     ?? '2023') || 2023
   const fhsaOpenSaudya    = parseInt(settings?.fhsa_opened_year_saudya   ?? '2023') || 2023
 
-  // ── TFSA room (cumulative room minus current balance) ─────────────────────
-  const canadaSinceSean   = parseInt(settings?.sean_canada_since   ?? '2015') || 2015
-  const canadaSinceSaudya = parseInt(settings?.saudya_canada_since ?? '2015') || 2015
-  // Rough cumulative room from 2009 at $7k/yr, adjusted for year resident
-  function tfsaCumulativeRoom(canadaSince: number, year = 2026): number {
-    const ANNUAL = [5000,5000,5000,5500,5500,5500,5500,6000,6000,6000,6000,6000,6000,6000,6500,6500,7000,7000]
-    let room = 0
-    for (let y = 2009; y <= year; y++) {
-      if (y >= canadaSince) room += ANNUAL[y - 2009] ?? 7000
-    }
-    return room
-  }
-  const tfsaRoomSean   = Math.max(0, tfsaCumulativeRoom(canadaSinceSean)   - bal.sean.tfsa)
-  const tfsaRoomSaudya = Math.max(0, tfsaCumulativeRoom(canadaSinceSaudya) - bal.saudya.tfsa)
+  const tfsaRoomSean   = tfsaCumulativeRoom(canadaSinceSean)
+  const tfsaRoomSaudya = tfsaCumulativeRoom(canadaSinceSaudya)
 
-  // ── Build simulation request ──────────────────────────────────────────────
+  // ── Simulation request ────────────────────────────────────────────────────
   function buildRequest(): WhatIfRequest {
-    const req: WhatIfRequest = { name: scenarioName, description: description || undefined, save: shouldSave }
-
+    const req: WhatIfRequest = {
+      name: scenarioName,
+      description: description || undefined,
+      save: shouldSave,
+    }
     const applyDelta = (key: keyof WhatIfRequest, current: number, deltaStr: string) => {
       const d = parseFloat(deltaStr)
-      if (!isNaN(d) && d !== 0) (req as unknown as Record<string, unknown>)[key] = current + d
+      if (!isNaN(d) && d !== 0)
+        (req as unknown as Record<string, unknown>)[key] = current + d
     }
-
-    applyDelta('override_sean_tfsa',   bal.sean.tfsa,    seanDeltas.tfsa)
-    applyDelta('override_sean_rrsp',   bal.sean.rrsp,    seanDeltas.rrsp)
-    applyDelta('override_sean_fhsa',   bal.sean.fhsa,    seanDeltas.fhsa)
-    applyDelta('override_sean_margin', bal.sean.margin,  seanDeltas.margin)
-    applyDelta('override_saudya_tfsa',   bal.saudya.tfsa,   saudyaDeltas.tfsa)
-    applyDelta('override_saudya_rrsp',   bal.saudya.rrsp,   saudyaDeltas.rrsp)
-    applyDelta('override_saudya_fhsa',   bal.saudya.fhsa,   saudyaDeltas.fhsa)
-    applyDelta('override_saudya_margin', bal.saudya.margin, saudyaDeltas.margin)
-
-    if (seanDeltas.base)   req.override_sean_base   = parseFloat(seanDeltas.base)
-    if (saudyaDeltas.base) req.override_saudya_base = parseFloat(saudyaDeltas.base)
-    if (houseYear) req.override_house_purchase_year = parseInt(houseYear)
-    if (houseDown) req.override_house_down_payment  = parseFloat(houseDown)
-
+    applyDelta('override_sean_tfsa',     bal.sean.tfsa,     seanD.tfsa)
+    applyDelta('override_sean_rrsp',     bal.sean.rrsp,     seanD.rrsp)
+    applyDelta('override_sean_fhsa',     bal.sean.fhsa,     seanD.fhsa)
+    applyDelta('override_sean_margin',   bal.sean.margin,   seanD.margin)
+    applyDelta('override_saudya_tfsa',   bal.saudya.tfsa,   saudyaD.tfsa)
+    applyDelta('override_saudya_rrsp',   bal.saudya.rrsp,   saudyaD.rrsp)
+    applyDelta('override_saudya_fhsa',   bal.saudya.fhsa,   saudyaD.fhsa)
+    applyDelta('override_saudya_margin', bal.saudya.margin, saudyaD.margin)
+    if (seanD.base)   req.override_sean_base   = parseFloat(seanD.base)
+    if (saudyaD.base) req.override_saudya_base = parseFloat(saudyaD.base)
+    if (houseYear)    req.override_house_purchase_year = parseInt(houseYear)
+    if (houseDown)    req.override_house_down_payment  = parseFloat(houseDown)
     return req
   }
 
   const simulate = useMutation({
-    mutationFn: (req: WhatIfRequest) => api.post<{ result: YearResult[] }>('/whatif/simulate', req),
+    mutationFn: (req: WhatIfRequest) =>
+      api.post<{ result: YearResult[] }>('/whatif/simulate', req),
     onSuccess: res => {
       setResult(res.data.result)
       if (shouldSave) qc.invalidateQueries({ queryKey: ['whatif-saved'] })
@@ -232,14 +242,16 @@ export default function WhatIf() {
 
   const { data: saved } = useQuery({
     queryKey: ['whatif-saved'],
-    queryFn: () => api.get<{ id: number; name: string; description?: string; created_at: string }[]>('/whatif/').then(r => r.data),
+    queryFn: () =>
+      api.get<{ id: number; name: string; description?: string; created_at: string }[]>('/whatif/')
+        .then(r => r.data),
   })
   const deleteSim = useMutation({
     mutationFn: (id: number) => api.delete(`/whatif/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['whatif-saved'] }),
   })
 
-  const chartData = result?.map(r => ({
+  const chartData  = result?.map(r => ({
     year: r.year,
     Conservative: Math.round(r.combined_net_worth.conservative),
     Moderate:     Math.round(r.combined_net_worth.moderate),
@@ -248,15 +260,17 @@ export default function WhatIf() {
   const lastResult = result?.[result.length - 1]
 
   const anyDelta = [
-    ...Object.values(seanDeltas), ...Object.values(saudyaDeltas), houseYear, houseDown
-  ].some(v => v !== '' && v !== '0' && parseFloat(v || '0') !== 0)
+    seanD.tfsa, seanD.rrsp, seanD.fhsa, seanD.margin, seanD.base,
+    saudyaD.tfsa, saudyaD.rrsp, saudyaD.fhsa, saudyaD.margin, saudyaD.base,
+    houseYear, houseDown,
+  ].some(v => v !== '' && parseFloat(v || '0') !== 0)
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-100 mb-2">What-If Simulator</h1>
       <p className="text-slate-400 text-sm mb-6">
-        Start from current balances, adjust any account by a delta, and see the 40-year impact.
-        Leave deltas at 0 to run a baseline projection.
+        Start from today's balances and adjust any account by a delta (+/−) to model a scenario.
+        Leave all deltas at 0 to run a straight baseline projection.
       </p>
 
       {/* Scenario name */}
@@ -278,103 +292,76 @@ export default function WhatIf() {
 
         {/* ── Sean ── */}
         <div className="card">
-          <h2 className="font-semibold text-slate-200 mb-1">Sean</h2>
-          <p className="text-xs text-slate-500 mb-3">Enter a positive amount to add, negative to remove. Projection starts from Current + Delta.</p>
+          <h2 className="font-semibold text-slate-200 mb-0.5">Sean</h2>
+          <p className="text-xs text-slate-500 mb-3">
+            Enter +/− delta. Simulation starts from Current + Delta for adjustable accounts.
+          </p>
 
-          <AccountRow
-            label="TFSA"
-            current={bal.sean.tfsa}
-            delta={seanDeltas.tfsa}
-            onDelta={v => setSeanDeltas(d => ({ ...d, tfsa: v }))}
-            limitBadge={
-              tfsaRoomSean <= 0
-                ? <LimitBadge label="TFSA annual room" used={bal.sean.tfsa} cap={tfsaCumulativeRoom(canadaSinceSean)} annual={TFSA_ANNUAL} />
-                : <span className="text-xs text-slate-500">{fmt(tfsaRoomSean)} room remaining · +{fmt(TFSA_ANNUAL)}/yr</span>
+          <AccountRow label="TFSA" current={bal.sean.tfsa} delta={seanD.tfsa} onDelta={v => setSeanD(d => ({ ...d, tfsa: v }))}
+            badge={
+              <div className="text-xs text-slate-500">
+                Cumulative room since {canadaSinceSean}: <strong className="text-slate-400">{fmt(tfsaRoomSean)}</strong>
+                <span className="ml-1 opacity-60">· +$7,000/yr</span>
+                <div className="text-slate-600 mt-0.5">Actual remaining = cumulative − net contributions · verify at CRA My Account</div>
+              </div>
             }
           />
-          <AccountRow
-            label="RRSP"
-            current={bal.sean.rrsp}
-            delta={seanDeltas.rrsp}
-            onDelta={v => setSeanDeltas(d => ({ ...d, rrsp: v }))}
-            note={`Annual cap: ${fmt(RRSP_CAP)} (or 18% of prior year income)`}
+          <AccountRow label="RRSP" current={bal.sean.rrsp} delta={seanD.rrsp} onDelta={v => setSeanD(d => ({ ...d, rrsp: v }))}
+            note={`Annual cap: ${fmt(RRSP_CAP)} or 18% of prior year income, whichever is less`}
           />
-          <AccountRow
-            label="FHSA"
-            current={bal.sean.fhsa}
-            delta={seanDeltas.fhsa}
-            onDelta={v => setSeanDeltas(d => ({ ...d, fhsa: v }))}
-            limitBadge={
-              <LimitBadge
-                label="Lifetime"
-                used={fhsaContribSean}
-                cap={FHSA_LIFETIME}
-                annual={fhsaContribSean < FHSA_LIFETIME ? fhsaAnnualRemaining(fhsaContribSean, fhsaOpenSean) : undefined}
-              />
-            }
-            note={fhsaContribSean >= FHSA_LIFETIME ? undefined : `${fmt(fhsaLifetimeRemaining(fhsaContribSean))} lifetime room left`}
+          <AccountRow label="FHSA" current={bal.sean.fhsa} delta={seanD.fhsa} onDelta={v => setSeanD(d => ({ ...d, fhsa: v }))}
+            badge={<FHSABadge contributed={fhsaContribSean} openYear={fhsaOpenSean} />}
+            note={fhsaContribSean < FHSA_LIFETIME ? `${fmt(fhsaLifetimeRemaining(fhsaContribSean))} lifetime room left` : undefined}
           />
-          <AccountRow
-            label="Margin"
-            current={bal.sean.margin}
-            delta={seanDeltas.margin}
-            onDelta={v => setSeanDeltas(d => ({ ...d, margin: v }))}
+          <AccountRow label="Margin" current={bal.sean.margin} delta={seanD.margin} onDelta={v => setSeanD(d => ({ ...d, margin: v }))}
             note="No contribution limit — borrowed or self-funded"
           />
-          <div className="pt-3 border-t border-slate-800 mt-1">
-            <div className="text-xs text-slate-500 mb-1">Base salary override (leave blank to use current)</div>
-            <input className="input text-sm" placeholder="e.g. 340000" value={seanDeltas.base} onChange={e => setSeanDeltas(d => ({ ...d, base: e.target.value }))} />
+          {bal.sean.cash > 0 && (
+            <InfoRow label="Cash (non-reg)" current={bal.sean.cash} note="Shown for reference — not yet in simulation engine" />
+          )}
+
+          <div className="pt-3 mt-1">
+            <label className="label text-xs">Base salary override (absolute, leave blank to use current)</label>
+            <input className="input text-sm h-9" placeholder="e.g. 340000" value={seanD.base} onChange={e => setSeanD(d => ({ ...d, base: e.target.value }))} />
           </div>
         </div>
 
         {/* ── Saudya ── */}
         <div className="card">
-          <h2 className="font-semibold text-slate-200 mb-1">Saudya</h2>
-          <p className="text-xs text-slate-500 mb-3">Enter a positive amount to add, negative to remove. Projection starts from Current + Delta.</p>
+          <h2 className="font-semibold text-slate-200 mb-0.5">Saudya</h2>
+          <p className="text-xs text-slate-500 mb-3">
+            Enter +/− delta. Simulation starts from Current + Delta for adjustable accounts.
+          </p>
 
-          <AccountRow
-            label="TFSA"
-            current={bal.saudya.tfsa}
-            delta={saudyaDeltas.tfsa}
-            onDelta={v => setSaudyaDeltas(d => ({ ...d, tfsa: v }))}
-            limitBadge={
-              tfsaRoomSaudya <= 0
-                ? <LimitBadge label="TFSA annual room" used={bal.saudya.tfsa} cap={tfsaCumulativeRoom(canadaSinceSaudya)} annual={TFSA_ANNUAL} />
-                : <span className="text-xs text-slate-500">{fmt(tfsaRoomSaudya)} room remaining · +{fmt(TFSA_ANNUAL)}/yr</span>
+          <AccountRow label="TFSA" current={bal.saudya.tfsa} delta={saudyaD.tfsa} onDelta={v => setSaudyaD(d => ({ ...d, tfsa: v }))}
+            badge={
+              <div className="text-xs text-slate-500">
+                Cumulative room since {canadaSinceSaudya}: <strong className="text-slate-400">{fmt(tfsaRoomSaudya)}</strong>
+                <span className="ml-1 opacity-60">· +$7,000/yr</span>
+                <div className="text-slate-600 mt-0.5">Actual remaining = cumulative − net contributions · verify at CRA My Account</div>
+              </div>
             }
           />
-          <AccountRow
-            label="RRSP"
-            current={bal.saudya.rrsp}
-            delta={saudyaDeltas.rrsp}
-            onDelta={v => setSaudyaDeltas(d => ({ ...d, rrsp: v }))}
-            note={`Annual cap: ${fmt(RRSP_CAP)} (or 18% of prior year income)`}
+          <AccountRow label="RRSP" current={bal.saudya.rrsp} delta={saudyaD.rrsp} onDelta={v => setSaudyaD(d => ({ ...d, rrsp: v }))}
+            note={`Annual cap: ${fmt(RRSP_CAP)} or 18% of prior year income, whichever is less`}
           />
-          <AccountRow
-            label="FHSA"
-            current={bal.saudya.fhsa}
-            delta={saudyaDeltas.fhsa}
-            onDelta={v => setSaudyaDeltas(d => ({ ...d, fhsa: v }))}
-            limitBadge={
-              <LimitBadge
-                label="Lifetime"
-                used={fhsaContribSaudya}
-                cap={FHSA_LIFETIME}
-                annual={fhsaContribSaudya < FHSA_LIFETIME ? fhsaAnnualRemaining(fhsaContribSaudya, fhsaOpenSaudya) : undefined}
-              />
-            }
-            note={fhsaContribSaudya >= FHSA_LIFETIME ? undefined : `${fmt(fhsaLifetimeRemaining(fhsaContribSaudya))} lifetime room left`}
+          <AccountRow label="FHSA" current={bal.saudya.fhsa} delta={saudyaD.fhsa} onDelta={v => setSaudyaD(d => ({ ...d, fhsa: v }))}
+            badge={<FHSABadge contributed={fhsaContribSaudya} openYear={fhsaOpenSaudya} />}
+            note={fhsaContribSaudya < FHSA_LIFETIME ? `${fmt(fhsaLifetimeRemaining(fhsaContribSaudya))} lifetime room left` : undefined}
           />
-          <AccountRow
-            label="Margin"
-            current={bal.saudya.margin}
-            delta={saudyaDeltas.margin}
-            onDelta={v => setSaudyaDeltas(d => ({ ...d, margin: v }))}
+          <AccountRow label="Margin" current={bal.saudya.margin} delta={saudyaD.margin} onDelta={v => setSaudyaD(d => ({ ...d, margin: v }))}
             note="No contribution limit — borrowed or self-funded"
           />
-          <div className="pt-3 border-t border-slate-800 mt-1">
-            <div className="text-xs text-slate-500 mb-1">Base salary override (leave blank to use current)</div>
-            <input className="input text-sm" placeholder="e.g. 115000" value={saudyaDeltas.base} onChange={e => setSaudyaDeltas(d => ({ ...d, base: e.target.value }))} />
+          {bal.saudya.cash > 0 && (
+            <InfoRow label="Cash (non-reg)" current={bal.saudya.cash} note="Shown for reference — not yet in simulation engine" />
+          )}
+          {bal.saudya.lira > 0 && (
+            <InfoRow label="LIRA" current={bal.saudya.lira} note="Locked-in — cannot contribute further" />
+          )}
+
+          <div className="pt-3 mt-1">
+            <label className="label text-xs">Base salary override (absolute, leave blank to use current)</label>
+            <input className="input text-sm h-9" placeholder="e.g. 115000" value={saudyaD.base} onChange={e => setSaudyaD(d => ({ ...d, base: e.target.value }))} />
           </div>
         </div>
       </div>
@@ -408,10 +395,10 @@ export default function WhatIf() {
           Save this scenario
         </label>
         {!anyDelta && (
-          <span className="text-xs text-slate-600">No deltas set — will project current balances as-is</span>
+          <span className="text-xs text-slate-600">No deltas set — projects current balances as-is</span>
         )}
         {simulate.isError && (
-          <span className="text-red-400 text-sm">Simulation failed — check the log.</span>
+          <span className="text-red-400 text-sm">Simulation failed — check the container log.</span>
         )}
       </div>
 
@@ -420,7 +407,7 @@ export default function WhatIf() {
         <div className="card mb-6">
           <h2 className="font-semibold text-slate-200 mb-1">Combined Net Worth — 2026 to 2065</h2>
           {anyDelta && (
-            <p className="text-xs text-slate-500 mb-4">Scenario: {scenarioName}{description ? ` — ${description}` : ''}</p>
+            <p className="text-xs text-slate-500 mb-4">{scenarioName}{description ? ` — ${description}` : ''}</p>
           )}
           <ResponsiveContainer width="100%" height={360}>
             <LineChart data={chartData}>
@@ -446,7 +433,7 @@ export default function WhatIf() {
               </div>
             ))}
           </div>
-          <div className="text-xs text-slate-600 mt-3">Conservative = 5% annual growth · Moderate = 7% · Optimistic = 10%</div>
+          <div className="text-xs text-slate-600 mt-3">Conservative = 5% growth · Moderate = 7% · Optimistic = 10%</div>
         </div>
       )}
 
