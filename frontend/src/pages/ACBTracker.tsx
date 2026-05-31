@@ -602,10 +602,18 @@ export default function ACBTracker() {
   const [harvestData, setHarvestData]     = useState<any[] | null>(null)
   const [loadingHarvest, setLoadingHarvest] = useState(false)
   const [marginalRate, setMarginalRate]   = useState(53)
+  const [ownerFilter, setOwnerFilter]     = useState<'all' | 'sean' | 'saudya' | 'joint'>('all')
 
   const nonRegAccounts = accounts.filter(a =>
     ['Margin', 'Cash', 'Joint Non-Reg'].includes(a.account_type)
   )
+
+  const filteredAccounts = ownerFilter === 'all'
+    ? nonRegAccounts
+    : nonRegAccounts.filter(a => a.owner === ownerFilter)
+
+  // Derive which owners actually have non-reg accounts
+  const availableOwners = Array.from(new Set(nonRegAccounts.map(a => a.owner)))
 
   const runHarvestAnalysis = async () => {
     setLoadingHarvest(true)
@@ -673,7 +681,32 @@ export default function ACBTracker() {
       </div>
 
       {/* ── ACB by account ── */}
-      {nonRegAccounts.map(acc => (
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold text-slate-100">ACB by Account</h2>
+        <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
+          {(['all', ...availableOwners] as const).map(owner => (
+            <button
+              key={owner}
+              onClick={() => setOwnerFilter(owner as typeof ownerFilter)}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors capitalize ${
+                ownerFilter === owner
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {owner === 'all' ? 'All' : owner}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filteredAccounts.length === 0 && (
+        <div className="text-slate-500 text-sm text-center py-8">
+          No non-registered accounts for {ownerFilter}.
+        </div>
+      )}
+
+      {filteredAccounts.map(acc => (
         <AccountACBSection key={acc.id} acc={acc} />
       ))}
 
