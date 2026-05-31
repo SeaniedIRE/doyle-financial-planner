@@ -212,6 +212,7 @@ function EditAccountModal({ account, onClose }: { account: Account; onClose: () 
     owner: account.owner,
     margin_loan_cad: account.margin_loan_cad,
     margin_rate_pct: account.margin_rate_pct,
+    margin_portfolio_value_cad: account.margin_portfolio_value_cad ?? 0,
     margin_buying_power_cad: account.margin_buying_power_cad ?? 0,
     margin_available_cad: account.margin_available_cad ?? 0,
     margin_requirement_cad: account.margin_requirement_cad ?? 0,
@@ -268,15 +269,15 @@ function EditAccountModal({ account, onClose }: { account: Account; onClose: () 
 
           {isMargin && (
             <div className="space-y-3">
-              <div className="text-xs text-slate-500 uppercase tracking-wider">From Broker Dashboard (optional)</div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider pt-1 border-t border-slate-700">
+                From Broker Dashboard <span className="normal-case">(copy from Questrade — updates daily)</span>
+              </div>
+              {numField('Portfolio Value (CAD)', 'margin_portfolio_value_cad', 'Total account value as reported by broker')}
               <div className="grid grid-cols-2 gap-3">
                 {numField('Max Buying Power (CAD)', 'margin_buying_power_cad')}
                 {numField('Available to Withdraw (CAD)', 'margin_available_cad')}
               </div>
-              {numField('Margin Requirement (CAD)', 'margin_requirement_cad', 'Minimum equity the broker requires')}
-              <div className="text-xs text-slate-500">
-                Copy these from your Questrade account overview screen — they change daily.
-              </div>
+              {numField('Margin Requirement (CAD)', 'margin_requirement_cad', 'Minimum equity required — from broker')}
             </div>
           )}
 

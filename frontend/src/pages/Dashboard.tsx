@@ -43,13 +43,21 @@ function MarginCard({ accounts }: { accounts: Account[] }) {
                   <span className="text-xs text-slate-500">{acc.owner}</span>
                 </div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1.5 text-xs">
+                {/* Broker portfolio value — shown when stored; falls back to computed */}
+                {acc.margin_portfolio_value_cad != null && acc.margin_portfolio_value_cad > 0 ? (
+                  <div className="flex justify-between col-span-2 md:col-span-1">
+                    <span className="text-slate-500">Portfolio value</span>
+                    <span className="text-slate-200 font-medium">{fmt(acc.margin_portfolio_value_cad)}</span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between col-span-2 md:col-span-1">
+                    <span className="text-slate-500">Portfolio value <span className="text-slate-600">(computed)</span></span>
+                    <span className="text-slate-200 font-medium">{fmt(acc.total_market_value_cad)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Portfolio value</span>
-                  <span className="text-slate-200 font-medium">{fmt(acc.total_market_value_cad)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Loan outstanding</span>
+                  <span className="text-slate-500">Margin used</span>
                   <span className="text-orange-300 font-medium">−{fmt(acc.margin_loan_cad)}</span>
                 </div>
                 <div className="flex justify-between font-medium">
@@ -66,19 +74,19 @@ function MarginCard({ accounts }: { accounts: Account[] }) {
                 </div>
                 {acc.margin_requirement_cad != null && acc.margin_requirement_cad > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Margin req.</span>
+                    <span className="text-slate-500">Margin requirement</span>
                     <span className="text-slate-300">{fmt(acc.margin_requirement_cad)}</span>
                   </div>
                 )}
                 {acc.margin_buying_power_cad != null && acc.margin_buying_power_cad > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Buying power</span>
+                    <span className="text-slate-500">Max buying power</span>
                     <span className="text-slate-300">{fmt(acc.margin_buying_power_cad)}</span>
                   </div>
                 )}
                 {acc.margin_available_cad != null && acc.margin_available_cad > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Available</span>
+                    <span className="text-slate-500">Available to withdraw</span>
                     <span className="text-slate-300">{fmt(acc.margin_available_cad)}</span>
                   </div>
                 )}

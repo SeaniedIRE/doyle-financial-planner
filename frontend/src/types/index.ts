@@ -7,6 +7,7 @@ export interface Account {
   currency: string
   margin_loan_cad: number
   margin_rate_pct: number
+  margin_portfolio_value_cad: number | null
   margin_buying_power_cad: number | null
   margin_available_cad: number | null
   margin_requirement_cad: number | null
