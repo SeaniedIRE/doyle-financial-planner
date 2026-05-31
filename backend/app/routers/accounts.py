@@ -28,6 +28,9 @@ class AccountUpdate(BaseModel):
     owner: Optional[str] = None           # allows fixing person_a/person_b → sean/saudya
     margin_loan_cad: Optional[float] = None
     margin_rate_pct: Optional[float] = None
+    margin_buying_power_cad: Optional[float] = None
+    margin_available_cad: Optional[float] = None
+    margin_requirement_cad: Optional[float] = None
     notes: Optional[str] = None
 
 
@@ -72,6 +75,9 @@ def list_accounts(db: Session = Depends(get_db)):
             "currency": acc.currency,
             "margin_loan_cad": acc.margin_loan_cad,
             "margin_rate_pct": acc.margin_rate_pct,
+            "margin_buying_power_cad": acc.margin_buying_power_cad,
+            "margin_available_cad": acc.margin_available_cad,
+            "margin_requirement_cad": acc.margin_requirement_cad,
             "notes": acc.notes,
             "total_book_value_cad": round(total_book, 2),
             "total_market_value_cad": round(total_market, 2),

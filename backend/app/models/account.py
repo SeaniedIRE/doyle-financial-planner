@@ -34,6 +34,10 @@ class Account(Base):
     currency = Column(String, default="CAD")
     margin_loan_cad = Column(Float, default=0.0)
     margin_rate_pct = Column(Float, default=3.95)
+    # Broker-reported margin figures (updated manually from the broker dashboard)
+    margin_buying_power_cad  = Column(Float, nullable=True)   # max buying power
+    margin_available_cad     = Column(Float, nullable=True)   # available to withdraw
+    margin_requirement_cad   = Column(Float, nullable=True)   # maintenance requirement
     is_active = Column(Boolean, default=True)
     notes = Column(String, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

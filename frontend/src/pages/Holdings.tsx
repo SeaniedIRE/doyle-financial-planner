@@ -205,21 +205,33 @@ const ACCOUNT_TYPES = ['TFSA', 'RRSP', 'FHSA', 'LIRA', 'Margin', 'Cash', 'Joint 
 
 function EditAccountModal({ account, onClose }: { account: Account; onClose: () => void }) {
   const qc = useQueryClient()
+  const isMargin = account.account_type === 'Margin'
   const [form, setForm] = useState({
     name: account.name,
     account_number: account.account_number,
     owner: account.owner,
     margin_loan_cad: account.margin_loan_cad,
     margin_rate_pct: account.margin_rate_pct,
+    margin_buying_power_cad: account.margin_buying_power_cad ?? 0,
+    margin_available_cad: account.margin_available_cad ?? 0,
+    margin_requirement_cad: account.margin_requirement_cad ?? 0,
     notes: account.notes ?? '',
   })
   const mut = useMutation({
     mutationFn: () => updateAccount(account.id, form),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); onClose() },
   })
+  const numField = (label: string, key: keyof typeof form, help?: string) => (
+    <div>
+      <label className="label">{label}</label>
+      <input type="number" step="any" className="input" value={form[key] as number}
+        onChange={e => setForm(f => ({ ...f, [key]: parseFloat(e.target.value) || 0 }))} />
+      {help && <div className="text-xs text-slate-500 mt-0.5">{help}</div>}
+    </div>
+  )
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="card w-full max-w-md">
+      <div className="card w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h2 className="font-semibold text-slate-100">Edit Account</h2>
           <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
@@ -244,18 +256,30 @@ function EditAccountModal({ account, onClose }: { account: Account; onClose: () 
               {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Margin Loan (CAD)</label>
-              <input type="number" step="any" className="input" value={form.margin_loan_cad}
-                onChange={e => setForm(f => ({ ...f, margin_loan_cad: parseFloat(e.target.value) || 0 }))} />
-            </div>
-            <div>
-              <label className="label">Margin Rate %</label>
-              <input type="number" step="0.01" className="input" value={form.margin_rate_pct}
-                onChange={e => setForm(f => ({ ...f, margin_rate_pct: parseFloat(e.target.value) || 0 }))} />
+
+          {/* Margin fields — shown for all accounts so any account can have a loan */}
+          <div className="pt-1 border-t border-slate-700">
+            <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Margin / Loan Details</div>
+            <div className="grid grid-cols-2 gap-3">
+              {numField('Loan Outstanding (CAD)', 'margin_loan_cad', 'Amount currently borrowed')}
+              {numField('Interest Rate %', 'margin_rate_pct', 'Annual rate on loan')}
             </div>
           </div>
+
+          {isMargin && (
+            <div className="space-y-3">
+              <div className="text-xs text-slate-500 uppercase tracking-wider">From Broker Dashboard (optional)</div>
+              <div className="grid grid-cols-2 gap-3">
+                {numField('Max Buying Power (CAD)', 'margin_buying_power_cad')}
+                {numField('Available to Withdraw (CAD)', 'margin_available_cad')}
+              </div>
+              {numField('Margin Requirement (CAD)', 'margin_requirement_cad', 'Minimum equity the broker requires')}
+              <div className="text-xs text-slate-500">
+                Copy these from your Questrade account overview screen — they change daily.
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="label">Notes</label>
             <input type="text" className="input" value={form.notes}

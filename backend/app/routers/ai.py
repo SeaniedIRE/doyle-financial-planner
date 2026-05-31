@@ -21,13 +21,33 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 # The key is NEVER returned to the frontend in any response.
 # ─────────────────────────────────────────────────────────────────────
 
+_KEY_FILE = "/app/data/anthropic_api_key.txt"
+
+
 def _get_api_key(db: Session) -> str:
-    """Return the best available Anthropic API key for this request."""
+    """Return the best available Anthropic API key for this request.
+
+    Priority order:
+      1. ANTHROPIC_API_KEY Docker env var  (set it in Unraid template for zero-config)
+      2. app_settings DB row               (set via Settings → AI Advisor Key)
+      3. /app/data/anthropic_api_key.txt   (file fallback — survives DB wipes)
+    """
+    import os
     from ..config import settings
     if settings.anthropic_api_key:
-        return settings.anthropic_api_key  # Docker env var wins
+        return settings.anthropic_api_key
     row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
-    return (row.value or "") if row else ""
+    if row and row.value:
+        return row.value
+    # Final fallback: key file written by set_key() — survives container rebuilds
+    try:
+        if os.path.isfile(_KEY_FILE):
+            key = open(_KEY_FILE).read().strip()
+            if key:
+                return key
+    except Exception:
+        pass
+    return ""
 
 
 class AskRequest(BaseModel):
@@ -55,26 +75,39 @@ def key_status(db: Session = Depends(get_db)):
     """Return whether an API key is configured and where it came from.
     The key value is NEVER included in the response.
     """
+    import os
     from ..config import settings
     if settings.anthropic_api_key:
         return {"configured": True, "source": "env"}
     row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
     if row and row.value:
         return {"configured": True, "source": "db"}
+    try:
+        if os.path.isfile(_KEY_FILE) and open(_KEY_FILE).read().strip():
+            return {"configured": True, "source": "file"}
+    except Exception:
+        pass
     return {"configured": False, "source": "none"}
 
 
 @router.post("/set-key")
 def set_key(req: SetKeyRequest, db: Session = Depends(get_db)):
-    """Store an Anthropic API key in the database.
-    The env-var always takes priority at runtime — this is the fallback for
-    users who cannot set Docker environment variables.
+    """Store an Anthropic API key in the database AND a persistent file.
+
+    Two-layer persistence:
+      - app_settings table → survives container restarts while DB volume is mounted
+      - /app/data/anthropic_api_key.txt → belt-and-suspenders; survives DB wipes
+        as long as the /app/data volume is intact (which it must be for all data).
+    The env-var always takes priority — set ANTHROPIC_API_KEY in Unraid to avoid
+    needing this endpoint at all.
     """
+    import os, stat
     if not req.api_key.startswith("sk-ant-"):
         raise HTTPException(
             status_code=422,
             detail="Invalid key format — Anthropic keys start with 'sk-ant-'.",
         )
+    # 1 — Save to DB
     row = db.query(AppSettings).filter(AppSettings.key == "anthropic_api_key").first()
     if row:
         row.value = req.api_key
@@ -82,6 +115,16 @@ def set_key(req: SetKeyRequest, db: Session = Depends(get_db)):
     else:
         db.add(AppSettings(key="anthropic_api_key", value=req.api_key))
     db.commit()
+
+    # 2 — Save to file (belt-and-suspenders; restricts read to owner only)
+    try:
+        os.makedirs(os.path.dirname(_KEY_FILE), exist_ok=True)
+        with open(_KEY_FILE, "w") as f:
+            f.write(req.api_key)
+        os.chmod(_KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)   # chmod 600
+    except Exception:
+        pass  # file write is a bonus — don't fail if /app/data isn't writable
+
     return {"message": "API key saved — AI Advisor is now ready."}
 
 
