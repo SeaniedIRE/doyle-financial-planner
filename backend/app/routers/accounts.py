@@ -282,7 +282,10 @@ async def import_holdings_csv(
             skipped_no_account += 1
             continue
 
-        if owner and acc.owner.lower() != owner.lower():
+        # Person filter: skip if this row belongs to a different person.
+        # Joint accounts are always included — they appear in every person's
+        # broker export and should be updated alongside that person's accounts.
+        if owner and acc.owner.lower() not in (owner.lower(), "joint"):
             skipped_wrong_owner += 1
             continue
 
