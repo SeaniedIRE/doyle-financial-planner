@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
@@ -203,18 +203,22 @@ def portfolio_totals(db: Session = Depends(get_db)):
     return totals
 
 
-class CSVImportRequest(BaseModel):
-    file_content: str = Field(..., max_length=200_000)
-
-
 @router.post("/holdings/import-csv")
 async def import_holdings_csv(
-    body: CSVImportRequest,
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """Import holdings from a broker CSV string. Matches by symbol+account_number."""
+    """Import holdings from a broker CSV file. Matches by symbol + account_number.
+
+    Required CSV columns (case-sensitive):
+        Account Number, Symbol, Quantity, Market Price, Book Value (CAD), Market Value
+    """
     import csv, io
-    file_content = body.file_content
+    raw = await file.read()
+    try:
+        file_content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        file_content = raw.decode("latin-1")  # fallback for some broker exports
     validate_csv_body(file_content)
     reader = csv.DictReader(io.StringIO(file_content))
     updated = 0
