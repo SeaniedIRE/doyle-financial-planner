@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
 import { getAccounts, getHoldings } from '../api/accounts'
 import { getLossHarvestAll } from '../api/ai'
 import api from '../api/client'
 import { fmt } from '../api/client'
 import Badge from '../components/ui/Badge'
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, Plus, Calculator, TrendingDown } from 'lucide-react'
 import type { Account, Holding, ACBTransaction } from '../types'
+
+// ─── ACB History table ────────────────────────────────────────────────────────
 
 function ACBHistory({ holdingId }: { holdingId: number }) {
   const { data = [] } = useQuery<ACBTransaction[]>({
@@ -52,6 +54,8 @@ function ACBHistory({ holdingId }: { holdingId: number }) {
   )
 }
 
+// ─── Add transaction form ─────────────────────────────────────────────────────
+
 function AddTransactionForm({ holdingId, onDone }: { holdingId: number; onDone: () => void }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
@@ -64,7 +68,13 @@ function AddTransactionForm({ holdingId, onDone }: { holdingId: number; onDone: 
     notes: '',
   })
   const mut = useMutation({
-    mutationFn: () => api.post('/acb/transaction', { holding_id: holdingId, ...form, quantity: parseFloat(form.quantity), price_per_share_cad: parseFloat(form.price_per_share_cad), fees_cad: parseFloat(form.fees_cad), fx_rate: parseFloat(form.fx_rate) }),
+    mutationFn: () => api.post('/acb/transaction', {
+      holding_id: holdingId, ...form,
+      quantity: parseFloat(form.quantity),
+      price_per_share_cad: parseFloat(form.price_per_share_cad),
+      fees_cad: parseFloat(form.fees_cad),
+      fx_rate: parseFloat(form.fx_rate),
+    }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['acb', holdingId] }); onDone() },
   })
   return (
@@ -90,6 +100,8 @@ function AddTransactionForm({ holdingId, onDone }: { holdingId: number; onDone: 
     </div>
   )
 }
+
+// ─── Holding ACB panel ────────────────────────────────────────────────────────
 
 function HoldingACBPanel({ holding }: { holding: Holding }) {
   const [showAdd, setShowAdd] = useState(false)
@@ -125,11 +137,364 @@ function HoldingACBPanel({ holding }: { holding: Holding }) {
   )
 }
 
+// ─── What-If Sale Calculator ──────────────────────────────────────────────────
+
+type LossCandidate = Holding & { accountName: string; accountOwner: string; isJoint: boolean }
+
+function SaleCalculator({ accounts }: { accounts: Account[] }) {
+  const nonRegAccounts = accounts.filter(a =>
+    ['Margin', 'Cash', 'Joint Non-Reg'].includes(a.account_type)
+  )
+
+  // Load holdings for every non-reg account upfront (cached alongside the ACB section below)
+  const holdingsResults = useQueries({
+    queries: nonRegAccounts.map(acc => ({
+      queryKey: ['holdings', acc.id],
+      queryFn: () => getHoldings(acc.id),
+    })),
+  })
+
+  const holdingsByAccId: Record<number, Holding[]> = Object.fromEntries(
+    nonRegAccounts.map((acc, i) => [acc.id, holdingsResults[i].data ?? []])
+  )
+
+  // Sale inputs
+  const [selAccId,  setSelAccId]  = useState<number | null>(null)
+  const [selHoldId, setSelHoldId] = useState<number | null>(null)
+  const [saleInput, setSaleInput] = useState('')
+  const [mode, setMode]           = useState<'dollars' | 'shares'>('dollars')
+  const [margRate, setMargRate]   = useState(43)
+  const [offsetIds, setOffsetIds] = useState<Set<number>>(new Set())
+
+  const selAcc     = nonRegAccounts.find(a => a.id === selAccId) ?? null
+  const accHoldings = selAccId ? (holdingsByAccId[selAccId] ?? []) : []
+  const selHolding  = accHoldings.find(h => h.id === selHoldId) ?? null
+
+  // Loss candidates: any non-reg holding with an unrealized loss, excluding the sale holding
+  const lossCandidates: LossCandidate[] = nonRegAccounts.flatMap((acc, i) =>
+    (holdingsResults[i].data ?? [])
+      .filter(h => h.unrealized_gain_cad < -100 && h.id !== selHoldId)
+      .map(h => ({ ...h, accountName: acc.name, accountOwner: acc.owner, isJoint: acc.owner === 'joint' }))
+  )
+
+  const toggleOffset = (id: number) => {
+    setOffsetIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  // ── Capital gain calculation ─────────────────────────────────────────────────
+  const saleNum = parseFloat(saleInput) || 0
+  let proceeds   = 0
+  let sharesSold = 0
+  let acbBasis   = 0
+  let grossGain  = 0
+
+  if (selHolding && saleNum > 0 && selHolding.current_price > 0) {
+    if (mode === 'dollars') {
+      proceeds   = saleNum
+      sharesSold = saleNum / selHolding.current_price
+    } else {
+      sharesSold = saleNum
+      proceeds   = saleNum * selHolding.current_price
+    }
+    acbBasis  = sharesSold * selHolding.acb_per_share
+    grossGain = proceeds - acbBasis
+  }
+
+  const isJoint = selAcc?.owner === 'joint'
+  // For joint accounts: 50/50 split on the gain
+  const yourGain = isJoint ? grossGain / 2 : grossGain
+
+  // Each selected loss candidate: for joint loss holdings the user's share is also 50%
+  const totalOffset = lossCandidates
+    .filter(h => offsetIds.has(h.id))
+    .reduce((s, h) => s + Math.abs(h.unrealized_gain_cad) * (h.isJoint ? 0.5 : 1), 0)
+
+  const netGain    = Math.max(0, yourGain - totalOffset)
+  const excessLoss = Math.max(0, totalOffset - yourGain)  // carry-forward amount
+  const hasResult  = selHolding && saleNum > 0
+
+  // Tax at 50% inclusion rate
+  const taxNoOffset   = yourGain  > 0 ? yourGain  * 0.5 * (margRate / 100) : 0
+  const taxWithOffset = netGain   > 0 ? netGain   * 0.5 * (margRate / 100) : 0
+  const taxSaved      = taxNoOffset - taxWithOffset
+
+  return (
+    <div className="card mb-8 border border-blue-800/30">
+      <div className="flex items-center gap-2 mb-5">
+        <Calculator size={18} className="text-blue-400 shrink-0" />
+        <h2 className="font-semibold text-slate-100">What-If Sale Calculator</h2>
+        <span className="text-xs text-slate-500 ml-1">
+          Model a partial sale, apply loss harvesting, and see the real tax cost
+        </span>
+      </div>
+
+      {/* Step 1 — Pick holding + sale amount */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+        <div>
+          <label className="label">Account</label>
+          <select
+            className="input"
+            value={selAccId ?? ''}
+            onChange={e => {
+              setSelAccId(e.target.value ? Number(e.target.value) : null)
+              setSelHoldId(null)
+              setSaleInput('')
+              setOffsetIds(new Set())
+            }}
+          >
+            <option value="">— pick account —</option>
+            {nonRegAccounts.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.name}{a.owner === 'joint' ? ' (Joint)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="label">Holding</label>
+          <select
+            className="input"
+            value={selHoldId ?? ''}
+            disabled={!selAccId}
+            onChange={e => {
+              setSelHoldId(e.target.value ? Number(e.target.value) : null)
+              setSaleInput('')
+              setOffsetIds(new Set())
+            }}
+          >
+            <option value="">— pick holding —</option>
+            {accHoldings.map(h => (
+              <option key={h.id} value={h.id}>
+                {h.symbol} — {fmt(h.market_value_cad)} ({h.unrealized_gain_cad >= 0 ? '+' : ''}{fmt(h.unrealized_gain_cad)})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="label">
+            Sale Amount
+            <button
+              className="ml-2 text-xs text-blue-400 hover:text-blue-300"
+              onClick={() => { setMode(m => m === 'dollars' ? 'shares' : 'dollars'); setSaleInput('') }}
+            >
+              [{mode === 'dollars' ? 'switch to shares' : 'switch to $'}]
+            </button>
+          </label>
+          <div className="relative">
+            {mode === 'dollars' && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>}
+            <input
+              type="number"
+              min={0}
+              className={`input ${mode === 'dollars' ? 'pl-7' : ''}`}
+              placeholder={mode === 'dollars' ? '5000' : '# shares'}
+              value={saleInput}
+              onChange={e => setSaleInput(e.target.value)}
+              disabled={!selHoldId}
+            />
+          </div>
+          {selHolding && mode === 'dollars' && saleNum > 0 && (
+            <div className="text-xs text-slate-500 mt-1">{sharesSold.toFixed(4)} shares @ {fmt(selHolding.current_price)}</div>
+          )}
+        </div>
+
+        <div>
+          <label className="label">Your Marginal Rate (%)</label>
+          <input
+            type="number"
+            className="input"
+            value={margRate}
+            onChange={e => setMargRate(Number(e.target.value))}
+          />
+          <div className="text-xs text-slate-500 mt-1">Sean ~53% · Saudya ~43%</div>
+        </div>
+      </div>
+
+      {/* Step 2 — Gain breakdown */}
+      {hasResult && (
+        <div className="bg-slate-800/50 rounded-xl p-4 mb-5">
+          <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Capital Gain Breakdown</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-slate-500 mb-0.5">Proceeds</div>
+              <div className="text-slate-100 font-medium">{fmt(proceeds)}</div>
+            </div>
+            <div>
+              <div className="text-slate-500 mb-0.5">ACB Basis</div>
+              <div className="text-slate-100 font-medium">−{fmt(acbBasis)}</div>
+              <div className="text-xs text-slate-600">{fmt(selHolding!.acb_per_share, 4)}/share × {sharesSold.toFixed(4)} shares</div>
+            </div>
+            <div>
+              <div className="text-slate-500 mb-0.5">Gross Capital Gain</div>
+              <div className={`font-semibold ${grossGain >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{grossGain >= 0 ? '+' : ''}{fmt(grossGain)}</div>
+            </div>
+            {isJoint && (
+              <div>
+                <div className="text-slate-500 mb-0.5">Your Share (50%)</div>
+                <div className={`font-semibold ${yourGain >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{fmt(yourGain)}</div>
+                <div className="text-xs text-slate-600">Joint account — split equally</div>
+              </div>
+            )}
+          </div>
+
+          {grossGain < 0 && (
+            <div className="mt-3 text-xs text-amber-300/80 bg-amber-900/20 border border-amber-700/30 rounded-lg p-2">
+              ⚠ This sale would realize a <strong>capital loss</strong> of {fmt(Math.abs(grossGain))}
+              {isJoint ? ` (your share: ${fmt(Math.abs(yourGain))})` : ''}. Losses can offset gains realized this year or be carried forward indefinitely.
+            </div>
+          )}
+          {selHolding!.acb_per_share === 0 && (
+            <div className="mt-3 text-xs text-amber-300/80 bg-amber-900/20 border border-amber-700/30 rounded-lg p-2">
+              ⚠ No ACB recorded for this holding — add transaction history below for an accurate gain calculation.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step 3 — Loss offset selection */}
+      {hasResult && grossGain > 0 && (
+        <div className="mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingDown size={15} className="text-red-400 shrink-0" />
+            <span className="text-sm font-medium text-slate-300">Apply Capital Losses to Offset</span>
+            <span className="text-xs text-slate-500">— check any losses you plan to harvest alongside this sale</span>
+          </div>
+
+          {lossCandidates.length === 0 ? (
+            <div className="text-slate-500 text-sm bg-slate-800/40 rounded-lg p-3">
+              No unrealized losses found in your non-registered accounts.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {lossCandidates.map(h => {
+                const yourLoss = h.isJoint ? Math.abs(h.unrealized_gain_cad) / 2 : Math.abs(h.unrealized_gain_cad)
+                const checked  = offsetIds.has(h.id)
+                return (
+                  <label
+                    key={h.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors
+                      ${checked
+                        ? 'bg-red-900/20 border-red-700/50'
+                        : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-600'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-red-500 shrink-0"
+                      checked={checked}
+                      onChange={() => toggleOffset(h.id)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-200">{h.symbol}</span>
+                        <span className="text-xs text-slate-500">{h.accountName}</span>
+                        {h.isJoint && <span className="text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">Joint</span>}
+                      </div>
+                      <div className="text-xs text-slate-400 truncate">{h.name}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-red-400 font-medium text-sm">−{fmt(yourLoss)}</div>
+                      {h.isJoint && (
+                        <div className="text-xs text-slate-500">your 50% of {fmt(Math.abs(h.unrealized_gain_cad))}</div>
+                      )}
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step 4 — Summary */}
+      {hasResult && (
+        <div className={`rounded-xl border p-4 ${netGain === 0 && offsetIds.size > 0
+          ? 'bg-emerald-900/20 border-emerald-700/40'
+          : grossGain > 0
+            ? 'bg-slate-800/60 border-slate-600/40'
+            : 'bg-slate-800/40 border-slate-700/40'}`}
+        >
+          <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Net Tax Impact</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-slate-500 mb-0.5">Gross Gain (your share)</div>
+              <div className={`font-semibold ${yourGain >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {yourGain >= 0 ? '+' : ''}{fmt(yourGain)}
+              </div>
+            </div>
+            {offsetIds.size > 0 && (
+              <div>
+                <div className="text-slate-500 mb-0.5">Losses Applied</div>
+                <div className="text-red-400 font-semibold">−{fmt(totalOffset)}</div>
+              </div>
+            )}
+            <div>
+              <div className="text-slate-500 mb-0.5">Net Taxable Gain</div>
+              <div className={`font-semibold ${netGain === 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
+                {netGain === 0 ? 'Fully offset ✓' : fmt(netGain)}
+              </div>
+              {netGain > 0 && <div className="text-xs text-slate-600">50% included = {fmt(netGain * 0.5)} taxable</div>}
+            </div>
+            <div>
+              <div className="text-slate-500 mb-0.5">
+                {offsetIds.size > 0 ? 'Tax Owed (after offset)' : 'Estimated Tax Owed'}
+              </div>
+              <div className={`font-semibold ${taxWithOffset === 0 ? 'text-emerald-400' : 'text-orange-300'}`}>
+                {taxWithOffset === 0 ? '$0' : fmt(taxWithOffset)}
+              </div>
+              {taxSaved > 0 && offsetIds.size > 0 && (
+                <div className="text-xs text-emerald-500 mt-0.5">saves {fmt(taxSaved)} vs. selling alone</div>
+              )}
+            </div>
+          </div>
+
+          {excessLoss > 0 && (
+            <div className="mt-3 text-xs text-blue-300/80 bg-blue-900/20 border border-blue-700/30 rounded-lg p-2">
+              💡 <strong>{fmt(excessLoss)}</strong> of unused losses would carry forward — they can offset any capital gains in future years (or be carried back 3 years).
+            </div>
+          )}
+
+          <div className="mt-3 text-xs text-slate-600">
+            Calculation: (Proceeds − ACB) × 50% inclusion × {margRate}% marginal rate.
+            {isJoint ? ' Joint account gains are split 50/50 for tax purposes.' : ''}
+            {' '}Verify with your accountant before filing.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Account ACB section ──────────────────────────────────────────────────────
+
+function AccountACBSection({ acc }: { acc: Account }) {
+  const { data: holdings = [] } = useQuery({
+    queryKey: ['holdings', acc.id],
+    queryFn: () => getHoldings(acc.id),
+  })
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Badge type={acc.account_type} />
+        <span className="font-medium text-slate-200">{acc.name}</span>
+        <span className="text-xs text-slate-500">({acc.owner})</span>
+      </div>
+      {holdings.map(h => <HoldingACBPanel key={h.id} holding={h} />)}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function ACBTracker() {
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
-  const [harvestData, setHarvestData] = useState<any[] | null>(null)
+  const [harvestData, setHarvestData]     = useState<any[] | null>(null)
   const [loadingHarvest, setLoadingHarvest] = useState(false)
-  const [marginalRate, setMarginalRate] = useState(53)
+  const [marginalRate, setMarginalRate]   = useState(53)
 
   const nonRegAccounts = accounts.filter(a =>
     ['Margin', 'Cash', 'Joint Non-Reg'].includes(a.account_type)
@@ -153,7 +518,10 @@ export default function ACBTracker() {
         CRA requires you to maintain accurate ACB records for capital gains reporting.
       </p>
 
-      {/* Loss harvesting panel */}
+      {/* ── What-If Sale Calculator ── */}
+      <SaleCalculator accounts={accounts} />
+
+      {/* ── Loss harvesting panel ── */}
       <div className="card mb-8">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -197,7 +565,7 @@ export default function ACBTracker() {
         ))}
       </div>
 
-      {/* ACB by account */}
+      {/* ── ACB by account ── */}
       {nonRegAccounts.map(acc => (
         <AccountACBSection key={acc.id} acc={acc} />
       ))}
@@ -208,23 +576,6 @@ export default function ACBTracker() {
         50% of the gain is included in your taxable income (2026). Capital losses can be carried back 3 years or forward indefinitely.
         The superficial loss rule (ITA s.54) denies a loss if you repurchase the identical security within 30 days before or after the sale.
       </div>
-    </div>
-  )
-}
-
-function AccountACBSection({ acc }: { acc: Account }) {
-  const { data: holdings = [] } = useQuery({
-    queryKey: ['holdings', acc.id],
-    queryFn: () => getHoldings(acc.id),
-  })
-  return (
-    <div className="mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <Badge type={acc.account_type} />
-        <span className="font-medium text-slate-200">{acc.name}</span>
-        <span className="text-xs text-slate-500">({acc.owner})</span>
-      </div>
-      {holdings.map(h => <HoldingACBPanel key={h.id} holding={h} />)}
     </div>
   )
 }
