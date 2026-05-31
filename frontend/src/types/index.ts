@@ -2,7 +2,7 @@ export interface Account {
   id: number
   name: string
   account_type: string
-  owner: 'sean' | 'saudya' | 'joint'
+  owner: string  // 'sean' | 'saudya' | 'joint' | 'person_a' | 'person_b' or any custom owner
   account_number: string
   currency: string
   margin_loan_cad: number
