@@ -205,35 +205,37 @@ def portfolio_totals(db: Session = Depends(get_db)):
     return totals
 
 
+_SEC_TYPE_MAP = {
+    "EXCHANGE_TRADED_FUND": "ETF",
+    "EQUITY": "Equity",
+    "MUTUAL_FUND": "Mutual Fund",
+    "BOND": "Bond",
+    "OPTION": "Option",
+    "CASH": "Cash",
+}
+
+
 @router.post("/holdings/import-csv")
 async def import_holdings_csv(
     file: UploadFile = File(...),
-    owner: Optional[str] = Form(None),   # "sean" | "saudya" | None = all accounts
+    owner: Optional[str] = Form(None),        # "sean" | "saudya" | None = all accounts
+    create_missing: str = Form("false"),       # "true" → create holdings not yet in the app
     db: Session = Depends(get_db),
 ):
     """Import holdings from a broker CSV file.
 
-    Accepts the broker's native export (Questrade and similar) OR the simplified
-    app format. Both share the same required column names so no reformatting needed.
+    Accepts the broker's native export (Questrade and similar).
 
-    Broker-native extras handled automatically:
-      - Extra columns (Exchange, MIC, Name, Security Type, …) are ignored.
-      - Market Value Currency / Market Price Currency — USD values are converted to
-        CAD using the stored fx_cad_usd setting before writing to the database.
-      - Name column updates the holding's display name from the broker's canonical name.
-      - Trailing footer/blank lines ("As of …") are silently skipped.
-      - BOM prefix (common in Windows broker exports) is stripped automatically.
-
-    owner (optional form field):
-      "sean"   — only update holdings in accounts owned by Sean.
-      "saudya" — only update holdings in accounts owned by Saudya.
-      omitted  — update any matched account (safe; accounts are matched by unique
-                 account_number so different people's accounts never overlap).
+    owner: filter to a specific person's accounts (omit = all accounts).
+    create_missing: when "true", holdings not yet in the app are CREATED from the CSV
+      row rather than skipped. Use this for the initial setup import.
+      On subsequent imports leave this off — only matched holdings are updated.
     """
     import csv, io
 
+    create_if_missing = create_missing.lower() in ("true", "1", "yes")
+
     raw = await file.read()
-    # utf-8-sig strips BOM that some broker exports prepend on Windows
     try:
         file_content = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -241,12 +243,10 @@ async def import_holdings_csv(
 
     validate_csv_body(file_content)
 
-    # Fetch the CAD/USD rate stored in app settings (needed for USD positions)
     fx_row = db.query(AppSettings).filter(AppSettings.key == "fx_cad_usd").first()
     fx_cad_usd = float(fx_row.value) if fx_row and fx_row.value else 1.3650
 
     def _flt(row: dict, key: str, default: float = 0.0) -> float:
-        """Parse a CSV field as float — handles quoted strings and empty cells."""
         val = (row.get(key) or "").strip().strip('"')
         try:
             return float(val) if val else default
@@ -255,42 +255,37 @@ async def import_holdings_csv(
 
     reader = csv.DictReader(io.StringIO(file_content))
     updated = 0
+    created = 0
     skipped_no_account = 0
     skipped_no_holding = 0
     skipped_wrong_owner = 0
 
     for row in reader:
-        symbol  = (row.get("Symbol")         or "").strip().strip('"')
+        symbol   = (row.get("Symbol")         or "").strip().strip('"')
         acct_num = (row.get("Account Number") or "").strip().strip('"')
 
         if not symbol or not acct_num:
             continue  # blank rows, "As of …" footer lines, etc.
 
-        qty      = _flt(row, "Quantity")
-        price    = _flt(row, "Market Price")
-        book_cad = _flt(row, "Book Value (CAD)")
-        market   = _flt(row, "Market Value")
-
-        # Broker-format currency columns (absent in simple format → default "CAD")
+        qty               = _flt(row, "Quantity")
+        price             = _flt(row, "Market Price")
+        book_cad          = _flt(row, "Book Value (CAD)")
+        market            = _flt(row, "Market Value")
         market_currency   = (row.get("Market Value Currency")  or "CAD").strip().strip('"').upper()
         price_currency_val = (row.get("Market Price Currency") or "CAD").strip().strip('"').upper()
         name_from_csv     = (row.get("Name")                   or "").strip().strip('"')
 
-        # Convert USD market value → CAD  (e.g. PSNY is priced and valued in USD)
         market_cad = market * fx_cad_usd if market_currency == "USD" else market
 
-        # Locate the account by account number
         acc = db.query(Account).filter(Account.account_number == acct_num).first()
         if not acc:
             skipped_no_account += 1
             continue
 
-        # Apply person filter if the caller selected a specific owner
         if owner and acc.owner.lower() != owner.lower():
             skipped_wrong_owner += 1
             continue
 
-        # Match the holding (account + symbol — different people have different accounts)
         h = db.query(Holding).filter(
             Holding.account_id == acc.id,
             Holding.symbol     == symbol,
@@ -298,37 +293,55 @@ async def import_holdings_csv(
         ).first()
 
         if not h:
-            skipped_no_holding += 1
-            continue
+            if create_if_missing:
+                # Build holding from broker CSV columns
+                raw_sec = (row.get("Security Type") or "").strip().strip('"')
+                exchange = (row.get("Exchange")     or "TSX").strip().strip('"')
+                h = Holding(
+                    account_id     = acc.id,
+                    symbol         = symbol,
+                    name           = name_from_csv or symbol,
+                    exchange       = exchange,
+                    security_type  = _SEC_TYPE_MAP.get(raw_sec, raw_sec or "ETF"),
+                    quantity       = qty,
+                    book_value_cad = book_cad,
+                    current_price  = price,
+                    price_currency = price_currency_val,
+                    market_value_cad = market_cad,
+                    last_updated   = datetime.utcnow(),
+                )
+                db.add(h)
+                created += 1
+                continue          # already set all fields — no further update needed
+            else:
+                skipped_no_holding += 1
+                continue
 
-        h.quantity       = qty
-        h.current_price  = price
-        h.price_currency = price_currency_val   # "CAD" or "USD"
-        h.book_value_cad = book_cad
+        # Update existing holding
+        h.quantity         = qty
+        h.current_price    = price
+        h.price_currency   = price_currency_val
+        h.book_value_cad   = book_cad
         h.market_value_cad = market_cad
-        h.last_updated   = datetime.utcnow()
+        h.last_updated     = datetime.utcnow()
         if name_from_csv:
-            h.name = name_from_csv              # keep broker's canonical name in sync
+            h.name = name_from_csv
 
         updated += 1
 
     db.commit()
 
     parts = [f"Updated {updated} holding(s)."]
+    if created:
+        parts.append(f"Created {created} new holding(s).")
     if skipped_no_holding:
-        parts.append(
-            f"{skipped_no_holding} symbol(s) not found — add them in Holdings first."
-        )
+        parts.append(f"{skipped_no_holding} symbol(s) not found in app (import without 'create missing' to see which).")
     if skipped_no_account:
-        parts.append(
-            f"{skipped_no_account} row(s) skipped — account number not in app."
-        )
+        parts.append(f"{skipped_no_account} row(s) skipped — account number not in app.")
     if skipped_wrong_owner:
-        parts.append(
-            f"{skipped_wrong_owner} row(s) belong to a different person and were skipped."
-        )
+        parts.append(f"{skipped_wrong_owner} row(s) belong to a different person and were skipped.")
 
-    return {"message": " ".join(parts), "updated": updated}
+    return {"message": " ".join(parts), "updated": updated, "created": created}
 
 
 @router.get("/settings")

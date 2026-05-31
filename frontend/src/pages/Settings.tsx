@@ -25,6 +25,7 @@ export default function Settings() {
   const [importResult, setImportResult] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [importOwner, setImportOwner] = useState<'all' | 'sean' | 'saudya'>('all')
+  const [createMissing, setCreateMissing] = useState(false)
 
   const currentSettings = { ...settings, ...form }
 
@@ -59,6 +60,7 @@ export default function Settings() {
       const formData = new FormData()
       formData.append('file', csvFile)
       if (importOwner !== 'all') formData.append('owner', importOwner)
+      formData.append('create_missing', createMissing ? 'true' : 'false')
       const res = await api.post('/accounts/holdings/import-csv', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
@@ -163,8 +165,8 @@ export default function Settings() {
           USD-priced positions (e.g. PSNY) are converted to CAD automatically using your stored FX rate.
         </p>
         <p className="text-xs text-amber-300 mb-4">
-          ⚠ Overwrites current prices/quantities for matched holdings. New symbols in the CSV are
-          ignored — add them manually in Holdings first.
+          ⚠ Overwrites current prices/quantities for matched holdings.
+          Enable <strong>Create missing holdings</strong> below for the first import — subsequent imports can leave it off.
         </p>
 
         {/* Drop zone */}
@@ -222,10 +224,30 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Create missing toggle */}
+        <div className="mt-4 flex items-start gap-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={createMissing}
+              onChange={e => setCreateMissing(e.target.checked)}
+              className="w-4 h-4 accent-blue-500"
+            />
+            <span className="text-sm text-slate-300 font-medium">Create missing holdings</span>
+          </label>
+          <span className="text-xs text-slate-500 pt-0.5">
+            {createMissing
+              ? '🟢 ON — symbols not yet in the app will be created from the CSV (use for initial setup)'
+              : '⚪ OFF — only existing holdings are updated (safe for routine imports)'}
+          </span>
+        </div>
+
         <button onClick={handleImport} disabled={importing || !csvFile}
           className="btn-primary mt-4 flex items-center gap-2 disabled:opacity-40">
           <Upload size={14} />
-          {importing ? 'Importing…' : `Import & Update Holdings${importOwner !== 'all' ? ` (${importOwner})` : ''}`}
+          {importing
+            ? 'Importing…'
+            : `${createMissing ? 'Full Import' : 'Update'} Holdings${importOwner !== 'all' ? ` (${importOwner})` : ''}`}
         </button>
         {importResult && <div className="mt-3 text-sm">{importResult}</div>}
 
@@ -234,7 +256,8 @@ export default function Settings() {
           <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">Supported CSV format</summary>
           <div className="mt-2 text-xs bg-slate-900 rounded p-3 text-slate-400 space-y-1">
             <p className="text-slate-300 font-medium">Your broker's native export works directly.</p>
-            <p>The importer reads these columns (others are ignored):</p>
+            <p className="text-amber-300">First import: enable <strong>Create missing holdings</strong> above — account numbers must already match (fix them in Holdings → ⚙ Edit Account first).</p>
+            <p className="mt-1">The importer reads these columns (others are ignored):</p>
             <p className="font-mono text-slate-300 mt-1">
               Account Number · Symbol · Quantity · Market Price · Book Value (CAD) · Market Value
             </p>
