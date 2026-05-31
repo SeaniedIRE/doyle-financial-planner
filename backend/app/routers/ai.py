@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=3, max_length=2000)
+    question: str = Field(..., min_length=1, max_length=2000)
     include_portfolio_context: bool = True
     year: int = Field(default=2026, ge=2020, le=2070)
 
@@ -162,7 +162,7 @@ def annual_review(year: int, request: Request, db: Session = Depends(get_db)):
         try:
             from ..services.tax_engine import calculate_annual_tax
             r = calculate_annual_tax(year=year, employment_income=inc_obj.employment_income or 0, bonus=(inc_obj.bonus or 0) + (getattr(inc_obj, 'other_bonus', None) or 0))
-            return r.combined_marginal_pct
+            return r.combined_marginal
         except Exception:
             return 0.0
 
