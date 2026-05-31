@@ -12,6 +12,7 @@ export default function Settings() {
   const [dragOver, setDragOver] = useState(false)
   const [importResult, setImportResult] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  const [importOwner, setImportOwner] = useState<'all' | 'sean' | 'saudya'>('all')
 
   const currentSettings = { ...settings, ...form }
 
@@ -45,6 +46,7 @@ export default function Settings() {
     try {
       const formData = new FormData()
       formData.append('file', csvFile)
+      if (importOwner !== 'all') formData.append('owner', importOwner)
       const res = await api.post('/accounts/holdings/import-csv', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
@@ -54,7 +56,7 @@ export default function Settings() {
       qc.invalidateQueries({ queryKey: ['holdings'] })
       qc.invalidateQueries({ queryKey: ['totals'] })
     } catch (e) {
-      setImportResult('❌ Import failed — check that the CSV has the required columns (see below).')
+      setImportResult('❌ Import failed — check the container log for details.')
     } finally {
       setImporting(false)
     }
@@ -94,11 +96,13 @@ export default function Settings() {
       <div className="card mb-6">
         <h2 className="font-semibold text-slate-200 mb-2">Import Holdings from Broker CSV</h2>
         <p className="text-sm text-slate-400 mb-3">
-          Drop your broker's CSV file below (or click to browse). Updates quantities, prices, and market values
-          for holdings matched by symbol + account number. Does not delete positions.
+          Drop your broker's native CSV export below — no reformatting needed. Updates quantities,
+          prices, and market values for holdings matched by symbol + account number.
+          USD-priced positions (e.g. PSNY) are converted to CAD automatically using your stored FX rate.
         </p>
         <p className="text-xs text-amber-300 mb-4">
-          ⚠ Overwrites current prices/quantities for matched holdings. New symbols are ignored — add them manually.
+          ⚠ Overwrites current prices/quantities for matched holdings. New symbols in the CSV are
+          ignored — add them manually in Holdings first.
         </p>
 
         {/* Drop zone */}
@@ -130,25 +134,56 @@ export default function Settings() {
         </div>
         <input id="csv-file-input" type="file" accept=".csv,text/csv,text/plain" className="hidden" onChange={onFileInput} />
 
+        {/* Person filter */}
+        <div className="mt-4">
+          <p className="text-xs text-slate-400 mb-2">
+            Update accounts for:
+            <span className="text-slate-500 ml-1">
+              (separate imports are already safe — account numbers never overlap between people)
+            </span>
+          </p>
+          <div className="flex gap-2">
+            {(['all', 'sean', 'saudya'] as const).map(o => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setImportOwner(o)}
+                className={`text-sm px-4 py-1.5 rounded-full border transition-colors ${
+                  importOwner === o
+                    ? 'border-blue-500 bg-blue-900/40 text-blue-200'
+                    : 'border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-300'
+                }`}
+              >
+                {o === 'all' ? 'All accounts' : o === 'sean' ? 'Sean only' : 'Saudya only'}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button onClick={handleImport} disabled={importing || !csvFile}
-          className="btn-primary mt-3 flex items-center gap-2 disabled:opacity-40">
+          className="btn-primary mt-4 flex items-center gap-2 disabled:opacity-40">
           <Upload size={14} />
-          {importing ? 'Importing…' : 'Import & Update Holdings'}
+          {importing ? 'Importing…' : `Import & Update Holdings${importOwner !== 'all' ? ` (${importOwner})` : ''}`}
         </button>
         {importResult && <div className="mt-3 text-sm">{importResult}</div>}
 
-        {/* Required format reference */}
+        {/* Format reference */}
         <details className="mt-4">
-          <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">Required CSV format</summary>
-          <div className="mt-2 text-xs font-mono bg-slate-900 rounded p-3 text-slate-300 overflow-x-auto">
-            <div className="text-slate-500 mb-1"># Required columns (header row must match exactly):</div>
-            <div>Account Number,Symbol,Quantity,Market Price,Book Value (CAD),Market Value</div>
-            <div className="text-slate-500 mt-2 mb-1"># Example row:</div>
-            <div>HQ8DKCMK3CAD,VFV,42.5,120.00,4800.00,5100.00</div>
+          <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">Supported CSV format</summary>
+          <div className="mt-2 text-xs bg-slate-900 rounded p-3 text-slate-400 space-y-1">
+            <p className="text-slate-300 font-medium">Your broker's native export works directly.</p>
+            <p>The importer reads these columns (others are ignored):</p>
+            <p className="font-mono text-slate-300 mt-1">
+              Account Number · Symbol · Quantity · Market Price · Book Value (CAD) · Market Value
+            </p>
+            <p className="mt-1">Optional broker columns used when present:</p>
+            <p className="font-mono text-slate-300">
+              Market Price Currency · Market Value Currency · Name
+            </p>
+            <p className="mt-1 text-slate-500">
+              USD values are converted to CAD using Settings → CAD/USD Exchange Rate.
+            </p>
           </div>
-          <p className="text-xs text-slate-500 mt-2">
-            If your broker exports different column names, paste the CSV into Claude and use the prompt below to reformat it.
-          </p>
         </details>
       </div>
 

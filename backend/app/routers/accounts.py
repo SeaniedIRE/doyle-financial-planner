@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
@@ -206,45 +206,127 @@ def portfolio_totals(db: Session = Depends(get_db)):
 @router.post("/holdings/import-csv")
 async def import_holdings_csv(
     file: UploadFile = File(...),
+    owner: Optional[str] = Form(None),   # "sean" | "saudya" | None = all accounts
     db: Session = Depends(get_db),
 ):
-    """Import holdings from a broker CSV file. Matches by symbol + account_number.
+    """Import holdings from a broker CSV file.
 
-    Required CSV columns (case-sensitive):
-        Account Number, Symbol, Quantity, Market Price, Book Value (CAD), Market Value
+    Accepts the broker's native export (Questrade and similar) OR the simplified
+    app format. Both share the same required column names so no reformatting needed.
+
+    Broker-native extras handled automatically:
+      - Extra columns (Exchange, MIC, Name, Security Type, …) are ignored.
+      - Market Value Currency / Market Price Currency — USD values are converted to
+        CAD using the stored fx_cad_usd setting before writing to the database.
+      - Name column updates the holding's display name from the broker's canonical name.
+      - Trailing footer/blank lines ("As of …") are silently skipped.
+      - BOM prefix (common in Windows broker exports) is stripped automatically.
+
+    owner (optional form field):
+      "sean"   — only update holdings in accounts owned by Sean.
+      "saudya" — only update holdings in accounts owned by Saudya.
+      omitted  — update any matched account (safe; accounts are matched by unique
+                 account_number so different people's accounts never overlap).
     """
     import csv, io
+
     raw = await file.read()
+    # utf-8-sig strips BOM that some broker exports prepend on Windows
     try:
-        file_content = raw.decode("utf-8")
+        file_content = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        file_content = raw.decode("latin-1")  # fallback for some broker exports
+        file_content = raw.decode("latin-1")
+
     validate_csv_body(file_content)
+
+    # Fetch the CAD/USD rate stored in app settings (needed for USD positions)
+    fx_row = db.query(AppSettings).filter(AppSettings.key == "fx_cad_usd").first()
+    fx_cad_usd = float(fx_row.value) if fx_row and fx_row.value else 1.3650
+
+    def _flt(row: dict, key: str, default: float = 0.0) -> float:
+        """Parse a CSV field as float — handles quoted strings and empty cells."""
+        val = (row.get(key) or "").strip().strip('"')
+        try:
+            return float(val) if val else default
+        except ValueError:
+            return default
+
     reader = csv.DictReader(io.StringIO(file_content))
     updated = 0
-    for row in reader:
-        symbol = row.get("Symbol", "").strip().strip('"')
-        acct_num = row.get("Account Number", "").strip().strip('"')
-        qty = float(row.get("Quantity", 0))
-        price = float(row.get("Market Price", 0))
-        book = float(row.get("Book Value (CAD)", 0))
-        market = float(row.get("Market Value", 0))
+    skipped_no_account = 0
+    skipped_no_holding = 0
+    skipped_wrong_owner = 0
 
+    for row in reader:
+        symbol  = (row.get("Symbol")         or "").strip().strip('"')
+        acct_num = (row.get("Account Number") or "").strip().strip('"')
+
+        if not symbol or not acct_num:
+            continue  # blank rows, "As of …" footer lines, etc.
+
+        qty      = _flt(row, "Quantity")
+        price    = _flt(row, "Market Price")
+        book_cad = _flt(row, "Book Value (CAD)")
+        market   = _flt(row, "Market Value")
+
+        # Broker-format currency columns (absent in simple format → default "CAD")
+        market_currency   = (row.get("Market Value Currency")  or "CAD").strip().strip('"').upper()
+        price_currency_val = (row.get("Market Price Currency") or "CAD").strip().strip('"').upper()
+        name_from_csv     = (row.get("Name")                   or "").strip().strip('"')
+
+        # Convert USD market value → CAD  (e.g. PSNY is priced and valued in USD)
+        market_cad = market * fx_cad_usd if market_currency == "USD" else market
+
+        # Locate the account by account number
         acc = db.query(Account).filter(Account.account_number == acct_num).first()
         if not acc:
+            skipped_no_account += 1
             continue
+
+        # Apply person filter if the caller selected a specific owner
+        if owner and acc.owner.lower() != owner.lower():
+            skipped_wrong_owner += 1
+            continue
+
+        # Match the holding (account + symbol — different people have different accounts)
         h = db.query(Holding).filter(
-            Holding.account_id == acc.id, Holding.symbol == symbol, Holding.is_active == True
+            Holding.account_id == acc.id,
+            Holding.symbol     == symbol,
+            Holding.is_active  == True,
         ).first()
-        if h:
-            h.quantity = qty
-            h.current_price = price
-            h.book_value_cad = book
-            h.market_value_cad = market
-            h.last_updated = datetime.utcnow()
-            updated += 1
+
+        if not h:
+            skipped_no_holding += 1
+            continue
+
+        h.quantity       = qty
+        h.current_price  = price
+        h.price_currency = price_currency_val   # "CAD" or "USD"
+        h.book_value_cad = book_cad
+        h.market_value_cad = market_cad
+        h.last_updated   = datetime.utcnow()
+        if name_from_csv:
+            h.name = name_from_csv              # keep broker's canonical name in sync
+
+        updated += 1
+
     db.commit()
-    return {"message": f"Updated {updated} holdings"}
+
+    parts = [f"Updated {updated} holding(s)."]
+    if skipped_no_holding:
+        parts.append(
+            f"{skipped_no_holding} symbol(s) not found — add them in Holdings first."
+        )
+    if skipped_no_account:
+        parts.append(
+            f"{skipped_no_account} row(s) skipped — account number not in app."
+        )
+    if skipped_wrong_owner:
+        parts.append(
+            f"{skipped_wrong_owner} row(s) belong to a different person and were skipped."
+        )
+
+    return {"message": " ".join(parts), "updated": updated}
 
 
 @router.get("/settings")
