@@ -163,10 +163,10 @@ Set up the **CA Backup** plugin on Unraid to back up
 ```
 Browser → Cloudflare Tunnel
                ↓
-         nginx container  (Unraid Docker network)
-               ↓  proxy_pass http://doyle-financial-planner:8000
-                  (container → container via Docker DNS — no host IP involved)
-         doyle-financial-planner container :8000
+         nginx + cloudflared container  (10.255.255.3)
+               ↓  proxy_pass http://10.255.255.13:8000
+                  (Docker network 10.255.255.0/25 — static IPs)
+         doyle-financial-planner container  (10.255.255.13:8000)
                ├── /api/*   — FastAPI routers
                ├── /assets  — Vite fingerprinted bundles (cache-busted)
                └── /*       — React SPA (index.html fallback)
@@ -176,5 +176,4 @@ Browser → Cloudflare Tunnel
 ```
 
 Single container: uvicorn serves the API and the React SPA.
-nginx is a separate container on the same Docker network and reaches
-the app by container name (`doyle-financial-planner`), not by host IP.
+nginx reaches the app via its static Docker network IP (10.255.255.13).
