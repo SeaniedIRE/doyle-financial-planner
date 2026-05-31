@@ -1,7 +1,7 @@
 from .account import Account, Holding, AppSettings
 from .acb import ACBTransaction
 from .income import Income
-from .scenario import Scenario, ScenarioAssumption, ForecastEntry
+from .scenario import Scenario, ForecastEntry
 from .room import ContributionRoom
 from .person import Person
 from .trust import FamilyTrust, TrustAsset
