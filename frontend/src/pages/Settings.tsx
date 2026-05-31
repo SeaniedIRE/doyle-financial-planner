@@ -26,6 +26,7 @@ export default function Settings() {
   const [importing, setImporting] = useState(false)
   const [importOwner, setImportOwner] = useState<'all' | 'sean' | 'saudya'>('all')
   const [createMissing, setCreateMissing] = useState(false)
+  const [syncBookValues, setSyncBookValues] = useState(false)
 
   const currentSettings = { ...settings, ...form }
 
@@ -61,6 +62,7 @@ export default function Settings() {
       formData.append('file', csvFile)
       if (importOwner !== 'all') formData.append('owner', importOwner)
       formData.append('create_missing', createMissing ? 'true' : 'false')
+      formData.append('sync_book_values', syncBookValues ? 'true' : 'false')
       const res = await api.post('/accounts/holdings/import-csv', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
@@ -162,12 +164,12 @@ export default function Settings() {
         <p className="text-sm text-slate-400 mb-3">
           Drop your broker's native CSV export below — no reformatting needed. Updates quantities,
           prices, and market values for holdings matched by symbol + account number.
-          USD-priced positions (e.g. PSNY) are converted to CAD automatically using your stored FX rate.
+          USD-priced positions are converted to CAD automatically using your stored FX rate.
         </p>
-        <p className="text-xs text-amber-300 mb-4">
-          ⚠ Overwrites current prices/quantities for matched holdings.
-          Enable <strong>Create missing holdings</strong> below for the first import — subsequent imports can leave it off.
-        </p>
+        <div className="text-xs bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2 mb-4 text-emerald-300">
+          🔒 <strong>Book values (ACB) are always preserved</strong> — routine imports never overwrite your adjusted cost base.
+          Only prices, quantities, and market values are refreshed. Enable <em>Sync book values</em> below to explicitly pull broker figures.
+        </div>
 
         {/* Drop zone */}
         <div
@@ -224,22 +226,43 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Create missing toggle */}
-        <div className="mt-4 flex items-start gap-3">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={createMissing}
-              onChange={e => setCreateMissing(e.target.checked)}
-              className="w-4 h-4 accent-blue-500"
-            />
-            <span className="text-sm text-slate-300 font-medium">Create missing holdings</span>
-          </label>
-          <span className="text-xs text-slate-500 pt-0.5">
-            {createMissing
-              ? '🟢 ON — symbols not yet in the app will be created from the CSV (use for initial setup)'
-              : '⚪ OFF — only existing holdings are updated (safe for routine imports)'}
-          </span>
+        {/* Import option toggles */}
+        <div className="mt-4 space-y-3">
+          {/* Create missing */}
+          <div className="flex items-start gap-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={createMissing}
+                onChange={e => setCreateMissing(e.target.checked)}
+                className="w-4 h-4 accent-blue-500"
+              />
+              <span className="text-sm text-slate-300 font-medium">Create missing holdings</span>
+            </label>
+            <span className="text-xs text-slate-500 pt-0.5">
+              {createMissing
+                ? '🟢 ON — symbols not yet in the app will be created from the CSV (use for initial setup)'
+                : '⚪ OFF — only existing holdings are updated (safe for routine imports)'}
+            </span>
+          </div>
+
+          {/* Sync book values */}
+          <div className="flex items-start gap-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={syncBookValues}
+                onChange={e => setSyncBookValues(e.target.checked)}
+                className="w-4 h-4 accent-amber-500"
+              />
+              <span className="text-sm text-slate-300 font-medium">Sync book values from CSV</span>
+            </label>
+            <span className="text-xs text-slate-500 pt-0.5">
+              {syncBookValues
+                ? '🟡 ON — book values (ACB) will be overwritten with broker figures. Use only if broker is your ACB source of truth.'
+                : '🔒 OFF — existing book values are protected (recommended for routine imports)'}
+            </span>
+          </div>
         </div>
 
         <button onClick={handleImport} disabled={importing || !csvFile}
@@ -260,6 +283,9 @@ export default function Settings() {
             <p className="mt-1">The importer reads these columns (others are ignored):</p>
             <p className="font-mono text-slate-300 mt-1">
               Account Number · Symbol · Quantity · Market Price · Book Value (CAD) · Market Value
+            </p>
+            <p className="mt-1 text-emerald-400/80">
+              ✓ Book Value (ACB) is read but <strong>not applied</strong> unless <em>Sync book values</em> is enabled — your ACB is safe on every routine import.
             </p>
             <p className="mt-1">Optional broker columns used when present:</p>
             <p className="font-mono text-slate-300">

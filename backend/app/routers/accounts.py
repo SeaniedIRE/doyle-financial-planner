@@ -228,6 +228,7 @@ async def import_holdings_csv(
     file: UploadFile = File(...),
     owner: Optional[str] = Form(None),        # "sean" | "saudya" | None = all accounts
     create_missing: str = Form("false"),       # "true" → create holdings not yet in the app
+    sync_book_values: str = Form("false"),     # "true" → overwrite book_value_cad from CSV
     db: Session = Depends(get_db),
 ):
     """Import holdings from a broker CSV file.
@@ -238,10 +239,15 @@ async def import_holdings_csv(
     create_missing: when "true", holdings not yet in the app are CREATED from the CSV
       row rather than skipped. Use this for the initial setup import.
       On subsequent imports leave this off — only matched holdings are updated.
+    sync_book_values: when "false" (default), book_value_cad is NEVER overwritten on
+      existing holdings — your manually-maintained ACB is preserved through every import.
+      Set "true" only when you explicitly want to pull the broker's book value figures
+      (e.g. initial setup, or if the broker is your authoritative ACB source).
     """
     import csv, io
 
-    create_if_missing = create_missing.lower() in ("true", "1", "yes")
+    create_if_missing   = create_missing.lower()   in ("true", "1", "yes")
+    do_sync_book_values = sync_book_values.lower() in ("true", "1", "yes")
 
     raw = await file.read()
     try:
@@ -328,15 +334,19 @@ async def import_holdings_csv(
                 skipped_no_holding += 1
                 continue
 
-        # Update existing holding
+        # Update existing holding — market data always refreshed
         h.quantity         = qty
         h.current_price    = price
         h.price_currency   = price_currency_val
-        h.book_value_cad   = book_cad
         h.market_value_cad = market_cad
         h.last_updated     = datetime.utcnow()
         if name_from_csv:
             h.name = name_from_csv
+        # Book value (ACB) is PRESERVED by default so manually-maintained ACB
+        # survives routine price imports.  Only overwrite when the user has
+        # explicitly opted in via sync_book_values=true.
+        if do_sync_book_values:
+            h.book_value_cad = book_cad
 
         updated += 1
 
