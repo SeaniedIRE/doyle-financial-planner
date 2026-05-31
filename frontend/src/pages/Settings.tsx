@@ -87,10 +87,14 @@ export default function Settings() {
         <h2 className="font-semibold text-slate-200 mb-4">App Settings</h2>
         <div className="grid grid-cols-2 gap-4">
           {[
-            { key: 'fx_cad_usd', label: 'CAD/USD Exchange Rate', help: 'Used to convert USD positions (e.g. PSNY) to CAD' },
-            { key: 'sean_canada_since', label: 'Sean Canada Resident Since (Year)', help: 'Used to calculate TFSA cumulative room' },
-            { key: 'saudya_canada_since', label: 'Saudya Canada Resident Since (Year)', help: 'Used to calculate TFSA cumulative room' },
-            { key: 'province', label: 'Province', help: 'Used for provincial tax calculations' },
+            { key: 'fx_cad_usd',          label: 'CAD/USD Exchange Rate',                help: 'Used to convert USD positions to CAD' },
+            { key: 'sean_canada_since',    label: 'Sean — Canada Resident Since (Year)',  help: 'Used to calculate cumulative TFSA room' },
+            { key: 'saudya_canada_since',  label: 'Saudya — Canada Resident Since (Year)',help: 'Used to calculate cumulative TFSA room' },
+            { key: 'province',             label: 'Province',                             help: 'Used for provincial tax calculations' },
+            { key: 'fhsa_contributed_sean',   label: 'Sean — FHSA Lifetime Contributed ($)',   help: 'Total $ contributed to FHSA to date (not balance — CRA tracks contributions, not gains). Max $40,000.' },
+            { key: 'fhsa_contributed_saudya', label: 'Saudya — FHSA Lifetime Contributed ($)', help: 'Total $ contributed to FHSA to date. Update each time you make a contribution. Max $40,000.' },
+            { key: 'fhsa_opened_year_sean',   label: 'Sean — FHSA Opened Year',               help: 'Year FHSA account was first opened. Determines annual room accrual ($8k/yr from this year).' },
+            { key: 'fhsa_opened_year_saudya', label: 'Saudya — FHSA Opened Year',             help: 'Year FHSA account was first opened. Determines annual room accrual.' },
           ].map(({ key, label, help }) => (
             <div key={key} className="col-span-2 md:col-span-1">
               <label className="label">{label}</label>

@@ -164,7 +164,8 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
   const [saleInput, setSaleInput] = useState('')
   const [mode, setMode]           = useState<'dollars' | 'shares'>('dollars')
   const [margRate, setMargRate]   = useState(43)
-  const [offsetIds, setOffsetIds] = useState<Set<number>>(new Set())
+  // Map<holdingId, dollarAmountToRealise> — not in map means unselected
+  const [offsetIds, setOffsetIds] = useState<Map<number, number>>(new Map())
 
   const selAcc     = nonRegAccounts.find(a => a.id === selAccId) ?? null
   const accHoldings = selAccId ? (holdingsByAccId[selAccId] ?? []) : []
@@ -177,10 +178,29 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
       .map(h => ({ ...h, accountName: acc.name, accountOwner: acc.owner, isJoint: acc.owner === 'joint' }))
   )
 
-  const toggleOffset = (id: number) => {
+  // offsetAmounts: holding id → dollar amount of loss to realise (not in map = not selected)
+  const toggleOffset = (h: LossCandidate) => {
+    const fullLoss = h.isJoint
+      ? Math.abs(h.unrealized_gain_cad) / 2
+      : Math.abs(h.unrealized_gain_cad)
     setOffsetIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      const next = new Map(prev)
+      if (next.has(h.id)) {
+        next.delete(h.id)
+      } else {
+        // Default to the minimum needed to cover remaining uncovered gain
+        const alreadyCovered = [...next.values()].reduce((s, v) => s + v, 0)
+        const stillNeeded = Math.max(0, yourGain - alreadyCovered)
+        next.set(h.id, stillNeeded > 0 ? Math.min(stillNeeded, fullLoss) : fullLoss)
+      }
+      return next
+    })
+  }
+
+  const setOffsetAmount = (id: number, amount: number, maxAmount: number) => {
+    setOffsetIds(prev => {
+      const next = new Map(prev)
+      if (next.has(id)) next.set(id, Math.min(Math.max(0, amount), maxAmount))
       return next
     })
   }
@@ -208,10 +228,9 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
   // For joint accounts: 50/50 split on the gain
   const yourGain = isJoint ? grossGain / 2 : grossGain
 
-  // Each selected loss candidate: for joint loss holdings the user's share is also 50%
-  const totalOffset = lossCandidates
-    .filter(h => offsetIds.has(h.id))
-    .reduce((s, h) => s + Math.abs(h.unrealized_gain_cad) * (h.isJoint ? 0.5 : 1), 0)
+  // Sum of user-entered partial amounts — no automatic scaling by joint split here
+  // because the user enters their share amount directly in the input
+  const totalOffset = [...offsetIds.values()].reduce((s, v) => s + v, 0)
 
   const netGain    = Math.max(0, yourGain - totalOffset)
   const excessLoss = Math.max(0, totalOffset - yourGain)  // carry-forward amount
@@ -243,7 +262,7 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
               setSelAccId(e.target.value ? Number(e.target.value) : null)
               setSelHoldId(null)
               setSaleInput('')
-              setOffsetIds(new Set())
+              setOffsetIds(new Map())
             }}
           >
             <option value="">— pick account —</option>
@@ -264,7 +283,7 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
             onChange={e => {
               setSelHoldId(e.target.value ? Number(e.target.value) : null)
               setSaleInput('')
-              setOffsetIds(new Set())
+              setOffsetIds(new Map())
             }}
           >
             <option value="">— pick holding —</option>
@@ -359,11 +378,14 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
       {/* Step 3 — Loss offset selection */}
       {hasResult && grossGain > 0 && (
         <div className="mb-5">
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-1">
             <TrendingDown size={15} className="text-red-400 shrink-0" />
             <span className="text-sm font-medium text-slate-300">Apply Capital Losses to Offset</span>
-            <span className="text-xs text-slate-500">— check any losses you plan to harvest alongside this sale</span>
           </div>
+          <p className="text-xs text-slate-500 mb-3 ml-5">
+            Check a position to harvest it alongside this sale. You don't have to realise the full loss —
+            adjust the amount to sell only what you need to offset the gain.
+          </p>
 
           {lossCandidates.length === 0 ? (
             <div className="text-slate-500 text-sm bg-slate-800/40 rounded-lg p-3">
@@ -372,37 +394,90 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
           ) : (
             <div className="space-y-2">
               {lossCandidates.map(h => {
-                const yourLoss = h.isJoint ? Math.abs(h.unrealized_gain_cad) / 2 : Math.abs(h.unrealized_gain_cad)
-                const checked  = offsetIds.has(h.id)
+                const fullLoss = h.isJoint
+                  ? Math.abs(h.unrealized_gain_cad) / 2
+                  : Math.abs(h.unrealized_gain_cad)
+                const checked      = offsetIds.has(h.id)
+                const chosenAmount = offsetIds.get(h.id) ?? 0
+                const pct          = fullLoss > 0 ? Math.round((chosenAmount / fullLoss) * 100) : 0
+                const sharesToSell = h.current_price > 0 ? chosenAmount / h.current_price : 0
+
                 return (
-                  <label
+                  <div
                     key={h.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors
-                      ${checked
-                        ? 'bg-red-900/20 border-red-700/50'
-                        : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-600'}`}
+                    className={`rounded-lg border transition-colors ${checked
+                      ? 'bg-red-900/20 border-red-700/50'
+                      : 'bg-slate-800/40 border-slate-700/50'}`}
                   >
-                    <input
-                      type="checkbox"
-                      className="accent-red-500 shrink-0"
-                      checked={checked}
-                      onChange={() => toggleOffset(h.id)}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-slate-200">{h.symbol}</span>
-                        <span className="text-xs text-slate-500">{h.accountName}</span>
-                        {h.isJoint && <span className="text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">Joint</span>}
+                    {/* Checkbox row */}
+                    <label className="flex items-center gap-3 p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="accent-red-500 shrink-0"
+                        checked={checked}
+                        onChange={() => toggleOffset(h)}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-200">{h.symbol}</span>
+                          <span className="text-xs text-slate-500">{h.accountName}</span>
+                          {h.isJoint && <span className="text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">Joint</span>}
+                        </div>
+                        <div className="text-xs text-slate-400 truncate">{h.name}</div>
                       </div>
-                      <div className="text-xs text-slate-400 truncate">{h.name}</div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-red-400 font-medium text-sm">−{fmt(yourLoss)}</div>
-                      {h.isJoint && (
-                        <div className="text-xs text-slate-500">your 50% of {fmt(Math.abs(h.unrealized_gain_cad))}</div>
-                      )}
-                    </div>
-                  </label>
+                      <div className="text-right shrink-0">
+                        <div className="text-red-400 font-medium text-sm">Max loss: {fmt(fullLoss)}</div>
+                        {h.isJoint && (
+                          <div className="text-xs text-slate-500">your 50% of {fmt(Math.abs(h.unrealized_gain_cad))}</div>
+                        )}
+                      </div>
+                    </label>
+
+                    {/* Partial amount controls — shown when checked */}
+                    {checked && (
+                      <div className="px-3 pb-3 border-t border-red-900/40 pt-2 space-y-2">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">
+                            <label className="text-xs text-slate-500 mb-1 block">
+                              Loss amount to realise <span className="text-red-400 ml-1">{pct}% of position</span>
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={fullLoss}
+                                step={100}
+                                className="input pl-7"
+                                value={chosenAmount}
+                                onChange={e => setOffsetAmount(h.id, Number(e.target.value), fullLoss)}
+                              />
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right text-xs text-slate-500 pt-4">
+                            <div>≈ {sharesToSell.toFixed(4)} shares</div>
+                            <div className="text-slate-600">@ {fmt(h.current_price)}/share</div>
+                          </div>
+                        </div>
+                        {/* Quick-set buttons */}
+                        <div className="flex gap-2">
+                          {[
+                            { label: 'Just enough', val: Math.min(fullLoss, Math.max(0, yourGain - (totalOffset - chosenAmount))) },
+                            { label: '50%', val: fullLoss * 0.5 },
+                            { label: '100%', val: fullLoss },
+                          ].map(({ label, val }) => (
+                            <button
+                              key={label}
+                              onClick={() => setOffsetAmount(h.id, Math.round(val), fullLoss)}
+                              className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:border-red-600 hover:text-red-300 transition-colors"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -412,7 +487,7 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
 
       {/* Step 4 — Summary */}
       {hasResult && (
-        <div className={`rounded-xl border p-4 ${netGain === 0 && offsetIds.size > 0
+        <div className={`rounded-xl border p-4 ${netGain === 0 && offsetIds.size > 0 && totalOffset > 0
           ? 'bg-emerald-900/20 border-emerald-700/40'
           : grossGain > 0
             ? 'bg-slate-800/60 border-slate-600/40'
@@ -426,7 +501,7 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
                 {yourGain >= 0 ? '+' : ''}{fmt(yourGain)}
               </div>
             </div>
-            {offsetIds.size > 0 && (
+            {offsetIds.size > 0 && totalOffset > 0 && (
               <div>
                 <div className="text-slate-500 mb-0.5">Losses Applied</div>
                 <div className="text-red-400 font-semibold">−{fmt(totalOffset)}</div>
@@ -441,12 +516,12 @@ function SaleCalculator({ accounts }: { accounts: Account[] }) {
             </div>
             <div>
               <div className="text-slate-500 mb-0.5">
-                {offsetIds.size > 0 ? 'Tax Owed (after offset)' : 'Estimated Tax Owed'}
+                {offsetIds.size > 0 && totalOffset > 0 ? 'Tax Owed (after offset)' : 'Estimated Tax Owed'}
               </div>
               <div className={`font-semibold ${taxWithOffset === 0 ? 'text-emerald-400' : 'text-orange-300'}`}>
                 {taxWithOffset === 0 ? '$0' : fmt(taxWithOffset)}
               </div>
-              {taxSaved > 0 && offsetIds.size > 0 && (
+              {taxSaved > 0 && offsetIds.size > 0 && totalOffset > 0 && (
                 <div className="text-xs text-emerald-500 mt-0.5">saves {fmt(taxSaved)} vs. selling alone</div>
               )}
             </div>

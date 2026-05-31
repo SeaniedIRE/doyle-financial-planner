@@ -154,6 +154,12 @@ ALLOWED_SETTINGS_KEYS = frozenset({
     "mat_leave_1_year",
     "mat_leave_2_year",
     "salary_growth_rate",
+    # FHSA lifetime contribution tracking (separate from account balance — CRA tracks contributions, not gains)
+    "fhsa_contributed_sean",
+    "fhsa_contributed_saudya",
+    # FHSA account open year (room only accrues from first open year)
+    "fhsa_opened_year_sean",
+    "fhsa_opened_year_saudya",
 })
 
 
