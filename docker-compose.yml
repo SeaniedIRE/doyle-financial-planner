@@ -4,13 +4,13 @@ services:
     container_name: doyle-financial-planner
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8000:8000"         # uvicorn — proxy your host nginx to http://<unraid-ip>:8000
     volumes:
       - ./data:/app/data    # SQLite database — back up this folder regularly
     env_file:
       - .env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

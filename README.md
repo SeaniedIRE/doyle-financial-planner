@@ -42,11 +42,14 @@ with an Unraid Community Apps template.
 docker run -d \
   --name doyle-financial-planner \
   --restart unless-stopped \
-  -p 8080:8080 \
+  -p 8000:8000 \
   -v /mnt/user/appdata/doyle-financial-planner/data:/app/data \
   -e ANTHROPIC_API_KEY=your-key-here \
   ghcr.io/seaniedire/doyle-financial-planner:latest
 ```
+
+The app listens on **port 8000**. Point your host nginx reverse proxy at
+`http://<unraid-ip>:8000`.
 
 ### Updating
 
@@ -63,7 +66,7 @@ cd doyle-financial-planner
 cp .env.example .env
 # Add your ANTHROPIC_API_KEY to .env (optional)
 docker compose up --build
-# App runs at http://localhost:8080
+# App runs at http://localhost:8000
 ```
 
 Or run the backend and frontend separately without Docker:
@@ -133,7 +136,7 @@ Set up the **CA Backup** plugin on Unraid to back up
 - Protected by Cloudflare Access (Zero Trust) — no app-level login needed
 - Your API key is in `.env` on the server only — never committed to git
 - `.gitignore` ensures `.env` and the database are never pushed to GitHub
-- Security headers (CSP, X-Frame-Options, HSTS) set in nginx
+- Security headers (CSP, X-Frame-Options, HSTS) should be set in your host nginx — see `nginx/app.conf` in this repo for the full recommended header set
 
 ---
 
@@ -158,13 +161,16 @@ Set up the **CA Backup** plugin on Unraid to back up
 ## Architecture
 
 ```
-Browser → Cloudflare Tunnel → Unraid :8080 → nginx (single container)
-                                                  ↓ /api/* proxy
-                                               uvicorn FastAPI
-                                                  ↓
-                                               SQLite (WAL mode)
-                                               /app/data/financial_planner.db
+Browser → Cloudflare Tunnel → host nginx (your reverse proxy)
+                                    ↓ proxy_pass http://<unraid-ip>:8000
+                               uvicorn FastAPI :8000  (single container)
+                                    ├── /api/*  — FastAPI routers
+                                    ├── /assets — Vite fingerprinted bundles
+                                    └── /*      — React SPA (index.html)
+                                    ↓
+                               SQLite (WAL mode)
+                               /app/data/financial_planner.db
 ```
 
-Single all-in-one container: nginx + uvicorn managed by supervisord.
-This lets Unraid's "Check for Updates" work with a single container entry.
+Single container: uvicorn serves both the API and the React SPA.
+No internal nginx — your existing host nginx routes to port 8000.

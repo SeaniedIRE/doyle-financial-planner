@@ -28,6 +28,10 @@ cd /app/backend
 alembic upgrade head
 echo "✓ Database up to date"
 
-# Start all processes via supervisor
-echo "🚀 Starting services (nginx + uvicorn)..."
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/app.conf
+# Start uvicorn — it becomes PID 1, Docker handles restarts
+echo "🚀 Starting uvicorn on port 8000..."
+exec uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info

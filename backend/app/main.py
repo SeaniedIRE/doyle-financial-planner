@@ -150,10 +150,35 @@ async def startup_event():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Health check (unauthenticated — used by nginx and Unraid)
+# Health check (unauthenticated — used by Unraid and the host reverse proxy)
 # ─────────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "Doyle Financial Planner"}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# React SPA — must be registered LAST so all /api/* routes win
+# ─────────────────────────────────────────────────────────────────────
+
+_STATIC_DIR = "/app/static"
+
+if os.path.isdir(_STATIC_DIR):
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse as _FileResponse
+
+    class _SPAStaticFiles(StaticFiles):
+        """
+        Serve the React SPA.  For any path that does not correspond to a file
+        on disk (i.e. a React Router client-side route) fall back to index.html
+        so the browser can handle the route itself.
+        """
+        async def get_response(self, path: str, scope):
+            try:
+                return await super().get_response(path, scope)
+            except Exception:
+                return _FileResponse(os.path.join(self.directory, "index.html"))
+
+    app.mount("/", _SPAStaticFiles(directory=_STATIC_DIR, html=True), name="spa")
